@@ -46,13 +46,16 @@ def act_quant(
             - The quantized tensor with dtype `torch.float8_e4m3fn`.
             - A tensor of scaling factors with dtype `torch.float32`.
     """
-    assert x.is_contiguous(), 'Input tensor must be contiguous'
+    assert x.is_contiguous(), "Input tensor must be contiguous"
     assert (
         x.size(-1) % block_size == 0
-    ), f'Last dimension size must be divisible by block_size (block_size={block_size})'
+    ), f"Last dimension size must be divisible by block_size (block_size={block_size})"
     y = torch.empty_like(x, dtype=torch.float8_e4m3fn)
     s = x.new_empty(*x.size()[:-1], x.size(-1) // block_size, dtype=torch.float32)
-    grid = lambda meta: (triton.cdiv(x.numel(), meta['BLOCK_SIZE']),) # noqa
+
+    def grid(meta):
+        return (triton.cdiv(x.numel(), meta["BLOCK_SIZE"]),)  # noqa
+
     act_quant_kernel[grid](x, y, s, BLOCK_SIZE=block_size)
     return y, s
 
@@ -104,16 +107,19 @@ def weight_cast_to_fp8(
     Raises:
         AssertionError: If `x` or `s` are not contiguous or if their dimensions are not 2.
     """
-    assert x.is_contiguous() and s.is_contiguous(), 'Input tensors must be contiguous'
-    assert x.dim() == 2 and s.dim() == 2, 'Input tensors must have 2 dimensions'
+    assert x.is_contiguous() and s.is_contiguous(), "Input tensors must be contiguous"
+    assert x.dim() == 2 and s.dim() == 2, "Input tensors must have 2 dimensions"
     M, N = x.size()
     y = torch.empty_like(
         x, dtype=torch.float8_e4m3fn
     )  # Set the appropriate dtype (e.g., int8 for quantization)
-    grid = lambda meta: ( # noqa
-        triton.cdiv(M, meta['BLOCK_SIZE']),
-        triton.cdiv(N, meta['BLOCK_SIZE']),
-    )
+
+    def grid(meta):
+        return (  # noqa
+            triton.cdiv(M, meta["BLOCK_SIZE"]),
+            triton.cdiv(N, meta["BLOCK_SIZE"]),
+        )
+
     weight_cast_to_fp8_kernel[grid](x, s, y, M, N, BLOCK_SIZE=block_size)
     return y
 
@@ -163,21 +169,24 @@ def weight_cast_to_bf16(
     Raises:
         AssertionError: If `x` or `s` are not contiguous or if their dimensions are not 2.
     """
-    assert x.is_contiguous() and s.is_contiguous(), 'Input tensors must be contiguous'
-    assert x.dim() == 2 and s.dim() == 2, 'Input tensors must have 2 dimensions'
+    assert x.is_contiguous() and s.is_contiguous(), "Input tensors must be contiguous"
+    assert x.dim() == 2 and s.dim() == 2, "Input tensors must have 2 dimensions"
     M, N = x.size()
-    y = torch.empty_like(x, dtype=torch.get_default_dtype())
-    grid = lambda meta: ( # noqa
-        triton.cdiv(M, meta['BLOCK_SIZE']),
-        triton.cdiv(N, meta['BLOCK_SIZE']),
-    )
+    y = torch.empty_like(x, dtype=torch.bfloat16)
+
+    def grid(meta):
+        return (  # noqa
+            triton.cdiv(M, meta["BLOCK_SIZE"]),
+            triton.cdiv(N, meta["BLOCK_SIZE"]),
+        )
+
     weight_cast_to_bf16_kernel[grid](x, s, y, M, N, BLOCK_SIZE=block_size)
     return y
 
 
 fp8_gemm_configs = [
     Config(
-        {'BLOCK_SIZE_M': block_m, 'BLOCK_SIZE_N': block_n, 'BLOCK_SIZE_K': 128},
+        {"BLOCK_SIZE_M": block_m, "BLOCK_SIZE_N": block_n, "BLOCK_SIZE_K": 128},
         num_stages=num_stages,
         num_warps=8,
     )
@@ -187,7 +196,7 @@ fp8_gemm_configs = [
 ]
 
 
-@triton.autotune(configs=fp8_gemm_configs, key=['N', 'K'])
+@triton.autotune(configs=fp8_gemm_configs, key=["N", "K"])
 @triton.jit
 def fp8_gemm_kernel(
     a_ptr,
@@ -263,17 +272,20 @@ def fp8_gemm(a: torch.Tensor, a_s: torch.Tensor, b: torch.Tensor, b_s: torch.Ten
     Returns:
         torch.Tensor: The result of the matrix multiplication.
     """
-    assert a.is_contiguous() and b.is_contiguous(), 'Input tensors must be contiguous'
+    assert a.is_contiguous() and b.is_contiguous(), "Input tensors must be contiguous"
     assert (
         a_s.is_contiguous() and b_s.is_contiguous()
-    ), 'Scaling factor tensors must be contiguous'
+    ), "Scaling factor tensors must be contiguous"
     K = a.size(-1)
     M = a.numel() // K
     N = b.size(0)
     c = a.new_empty(*a.size()[:-1], N, dtype=torch.get_default_dtype())
-    grid = lambda META: ( # noqa
-        triton.cdiv(M, META['BLOCK_SIZE_M']),
-        triton.cdiv(N, META['BLOCK_SIZE_N']),
-    )
+
+    def grid(META):
+        return (  # noqa
+            triton.cdiv(M, META["BLOCK_SIZE_M"]),
+            triton.cdiv(N, META["BLOCK_SIZE_N"]),
+        )
+
     fp8_gemm_kernel[grid](a, b, c, a_s, b_s, M, N, K)
     return c
