@@ -9,7 +9,7 @@ from loguru import logger
 
 def seed_all(seed):
     random.seed(seed)
-    os.environ['PYTHONHASHSEED'] = str(seed)
+    os.environ["PYTHONHASHSEED"] = str(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
@@ -19,44 +19,46 @@ def seed_all(seed):
 
 
 def check_config(config):
-    if config.get('sparse', False):
-        logger.info('Use sparsificatino method')
+    if config.get("sparse", False):
+        logger.info("Use sparsificatino method")
     else:
 
         def check_weight_setting(weight_setting):
-            if weight_setting.granularity == 'per_group':
+            if weight_setting.granularity == "per_group":
                 assert weight_setting.group_size > 0
-            elif weight_setting.granularity == 'per_head':
+            elif weight_setting.granularity == "per_head":
                 assert weight_setting.head_num > 0
 
         for _, modality_config in config.quant.items():
-            if not isinstance(modality_config, dict) or not modality_config.get('weight', False):
+            if not isinstance(modality_config, dict) or not modality_config.get(
+                "weight", False
+            ):
                 continue
-            if modality_config.weight.get('granularity', False):
+            if modality_config.weight.get("granularity", False):
                 weight_setting = modality_config.weight
                 check_weight_setting(weight_setting)
-            if modality_config.weight.get('w_1', False):
+            if modality_config.weight.get("w_1", False):
                 weight_setting = modality_config.weight.w_1
                 check_weight_setting(weight_setting)
-            if modality_config.weight.get('w_2', False):
+            if modality_config.weight.get("w_2", False):
                 weight_setting = modality_config.weight.w_2
                 check_weight_setting(weight_setting)
-    if config.model.get('tokenizer_mode', False):
+    if config.model.get("tokenizer_mode", False):
         assert (
-            config.model.tokenizer_mode == 'slow'
-            or config.model.tokenizer_mode == 'fast'
-        ), 'Tokenizer_mode should be slow or fast.'
-        logger.info(f'Tokenizer_mode is set to {config.model.tokenizer_mode}.')
+            config.model.tokenizer_mode == "slow"
+            or config.model.tokenizer_mode == "fast"
+        ), "Tokenizer_mode should be slow or fast."
+        logger.info(f"Tokenizer_mode is set to {config.model.tokenizer_mode}.")
     else:
-        config.model.tokenizer_mode = 'slow'
-        logger.info('Tokenizer_mode is set to slow.')
+        config.model.tokenizer_mode = "slow"
+        logger.info("Tokenizer_mode is set to slow.")
 
 
 def mkdirs(path):
     if not os.path.exists(path):
         os.makedirs(path)
     else:
-        raise Exception(f'{path} existed before. Need check.')
+        raise Exception(f"{path} existed before. Need check.")
 
 
 def copy_files(source_dir, target_dir, substring):
@@ -65,11 +67,12 @@ def copy_files(source_dir, target_dir, substring):
             source_file = os.path.join(source_dir, filename)
             target_file = os.path.join(target_dir, filename)
             shutil.copy(source_file, target_file)
-            logger.info(f'Copied {filename} to {target_dir}')
+            logger.info(f"Copied {filename} to {target_dir}")
 
 
 def print_important_package_version():
     from importlib.metadata import version
+
     logger.info(f"torch : {version('torch')}")
     logger.info(f"transformers : {version('transformers')}")
     logger.info(f"tokenizers : {version('tokenizers')}")
@@ -80,18 +83,26 @@ def print_important_package_version():
 def get_modality(config):
     modalities = []
     modality_configs = []
-    compression_config = config.quant if 'quant' in config else config.sparse
-    for modality in ['vision', 'language']:
+    compression_config = config.quant if "quant" in config else config.sparse
+    for modality in ["vision", "language"]:
         if modality in compression_config:
             compression_config[modality].modality = modality
             modalities.append(modality)
             modality_configs.append(compression_config[modality])
     if not modalities:
-        compression_config.modality = 'language'
-        return ['language'], [compression_config]
+        compression_config.modality = "language"
+        return ["language"], [compression_config]
     return modalities, modality_configs
 
 
 def deploy_all_modality(blockwise_opts, quant_format):
     for blockwise_opt in blockwise_opts:
         blockwise_opt.deploy(quant_format)
+
+
+def get_decoder_layer_ori_device(layer):
+    device = layer.input_layernorm.weight.device
+    if device == "meta":
+        print(f"the original device is meta, change to cpu")
+        device = "cpu"
+    return device

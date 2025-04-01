@@ -14,8 +14,8 @@ from .module_utils import _LLMC_LN_TYPES_, _TRANSFORMERS_LN_TYPES_
 class SmoothQuant(BaseBlockwiseQuantization):
     def __init__(self, model, quant_config, input, padding_mask, config):
         super().__init__(model, quant_config, input, padding_mask, config)
-        special_config = self.quant_config.get('special', {})
-        self.alpha = special_config.get('alpha', 0.5)
+        special_config = self.quant_config.get("special", {})
+        self.alpha = special_config.get("alpha", 0.5)
 
     @torch.no_grad()
     def filter_subset(self, prev_op):
@@ -65,15 +65,15 @@ class SmoothQuant(BaseBlockwiseQuantization):
         input_feat,
         subset_kwargs,
     ):
-        layers_dict = subset['layers']
-        prev_op = subset['prev_op']
-        input_name = subset['input'][0]
+        layers_dict = subset["layers"]
+        prev_op = subset["prev_op"]
+        input_name = subset["input"][0]
 
         if not self.filter_subset(prev_op):
-            logger.info('Do not transform this subset.')
+            logger.info("Do not transform this subset.")
             return
         layers = list(layers_dict.values())
         scale = self.search_scale_subset(layers, input_feat[input_name])
         self.apply_scale(scale, prev_op, layers)
         if self.act_static:
-            self.update_input_feat(scale, input_feat, layers_dict)
+            self.update_input_feat(scale, input_feat, layers_dict, is_gqa=False)

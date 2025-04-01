@@ -5,7 +5,7 @@ def update_vllm_quant_config(
     model,
     config,
     save_quant_path,
-    vllm_quant_method='compressed-tensors',
+    vllm_quant_method='w8a8_int',
 
 ):
     need_pack = config.quant.weight.get('need_pack', False)
@@ -81,7 +81,8 @@ def update_vllm_quant_config(
                 'targets': ['Linear'],  # Now only support "Linear".
                 'input_activations': {
                     'dynamic': dynamic,
-                    'group_size': None,   # Don't support activations per-group quant.
+                    # Don't support activations per-group quant.
+                    'group_size': None,
                     'num_bits': a_num_bits,
                     'observer': 'minmax',
                     'observer_kwargs': {},

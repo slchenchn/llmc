@@ -12,14 +12,23 @@ from accelerate import init_empty_weights
 from loguru import logger
 from safetensors import safe_open
 from torch.nn import functional as F
+from tqdm import tqdm, trange
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 from llmc.compression.quantization.module_utils import (
-    _LLMC_LINEAR_TYPES_, _LLMC_LN_TYPES_, _TRANSFORMERS_LINEAR_TYPES_,
-    _TRANSFORMERS_LN_TYPES_, LlmcFp8Linear)
-from llmc.compression.quantization.utils import (check_do_quant, check_w_only,
-                                                 get_aquantizer,
-                                                 get_wquantizer)
+    _LLMC_LINEAR_TYPES_,
+    _LLMC_LN_TYPES_,
+    _TRANSFORMERS_LINEAR_TYPES_,
+    _TRANSFORMERS_LN_TYPES_,
+    LlmcFp8Linear,
+)
+from llmc.compression.quantization.utils import (
+    check_do_quant,
+    check_w_only,
+    get_aquantizer,
+    get_wquantizer,
+)
+from llmc.utils.utils import get_decoder_layer_ori_device
 
 
 class BaseModel(metaclass=ABCMeta):
@@ -27,10 +36,12 @@ class BaseModel(metaclass=ABCMeta):
         self.config = config
         self.model_type = self.config.model.type
         self.model_path = self.config.model.path
-        self.tokenizer_mode = self.config.model.get('tokenizer_mode', 'fast')
-        self.use_cpu_to_save_cuda_mem_for_catcher = self.config.model.get('use_cpu_to_save_cuda_mem_for_catcher', False) # noqa
+        self.tokenizer_mode = self.config.model.get("tokenizer_mode", "fast")
+        self.use_cpu_to_save_cuda_mem_for_catcher = self.config.model.get(
+            "use_cpu_to_save_cuda_mem_for_catcher", False
+        )  # noqa
         torch_dtype = self.config.model.torch_dtype
-        self.torch_dtype = torch_dtype if torch_dtype == 'auto' else eval(torch_dtype)
+        self.torch_dtype = torch_dtype if torch_dtype == "auto" else eval(torch_dtype)
         self.device_map = device_map
         self.use_cache = use_cache
         self.mm_model = None
@@ -46,13 +57,13 @@ class BaseModel(metaclass=ABCMeta):
         if self.mm_model:
             self.mm_model.eval()
 
-    def set_modality(self, modality='language'):
-        assert modality in ['audio', 'vision', 'language']
+    def set_modality(self, modality="language"):
+        assert modality in ["audio", "vision", "language"]
         self.modality = modality
         self.update_key_info()
 
     def get_modality(self):
-        assert self.modality in ['audio', 'vision', 'language']
+        assert self.modality in ["audio", "vision", "language"]
         return self.modality
 
     def update_key_info(self):
@@ -115,13 +126,13 @@ class BaseModel(metaclass=ABCMeta):
         pass
 
     def build_tokenizer(self):
-        if self.model_type not in ['Vit']:
-            assert self.tokenizer_mode in ['fast', 'slow']
+        if self.model_type not in ["Vit"]:
+            assert self.tokenizer_mode in ["fast", "slow"]
             self.tokenizer = AutoTokenizer.from_pretrained(
                 self.model_path, use_fast=self.tokenizer_mode, trust_remote_code=True
             )
-            if 'Intern' in self.model_type:
-                self.tokenizer.padding_side = 'left'
+            if "Intern" in self.model_type:
+                self.tokenizer.padding_side = "left"
             if self.tokenizer.pad_token is None:
                 self.tokenizer.pad_token = self.tokenizer.eos_token
         else:
@@ -138,32 +149,36 @@ class BaseModel(metaclass=ABCMeta):
 
     def apply_chat_template(self, prompt):
         messages = [
-            {'role': 'system', 'content': 'You are a helpful assistant.'},
-            {'role': 'user', 'content': prompt}
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": prompt},
         ]
         text = self.tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True
+            messages, tokenize=False, add_generation_prompt=True
         )
         return text
 
-    def batch_process(self, samples, calib_or_eval='eval', apply_chat_template=False, return_inputs=True): # noqa
-        assert calib_or_eval == 'calib' or calib_or_eval == 'eval'
+    def batch_process(
+        self,
+        samples,
+        calib_or_eval="eval",
+        apply_chat_template=False,
+        return_inputs=True,
+    ):  # noqa
+        assert calib_or_eval == "calib" or calib_or_eval == "eval"
         texts = []
         for idx in range(len(samples)):
-            question = samples[idx]['question']
+            question = samples[idx]["question"]
             if apply_chat_template:
                 question = self.apply_chat_template(question)
             texts.append(question)
         if not return_inputs:
             return texts
-        model_inputs = self.tokenizer(texts, return_tensors='pt', padding=True)
-        input_ids = model_inputs['input_ids']
-        attention_mask = model_inputs['attention_mask']
+        model_inputs = self.tokenizer(texts, return_tensors="pt", padding=True)
+        input_ids = model_inputs["input_ids"]
+        attention_mask = model_inputs["attention_mask"]
         inputs = {
-            'input_ids': input_ids,
-            'attention_mask': attention_mask,
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
         }
         return inputs
 
@@ -179,30 +194,34 @@ class BaseModel(metaclass=ABCMeta):
                 for i, arg in enumerate(args):
                     if i > 0:
                         kwargs[params[i]] = arg
-                first_block_input['data'].append(args[0])
-                if 'output_router_logits' in kwargs:
-                    assert kwargs['output_router_logits'] is False
-                    kwargs.pop('output_router_logits')
-                first_block_input['kwargs'].append(kwargs)
+                first_block_input["data"].append(args[0])
+                if "output_router_logits" in kwargs:
+                    assert kwargs["output_router_logits"] is False
+                    kwargs.pop("output_router_logits")
+                first_block_input["kwargs"].append(kwargs)
                 raise ValueError
+
         return Catcher
 
     def __str__(self):
-        return f'\nConfig: \n{str(self.model_config)} \nModel: \n{str(self.model)}'
+        return f"\nConfig: \n{str(self.model_config)} \nModel: \n{
+            str(self.model)}"
 
     def build_model(self):
         self.model_config = AutoConfig.from_pretrained(
             self.model_path, trust_remote_code=True
         )
         if not self.use_cache:
-            if hasattr(self.model_config, 'use_cache'):
+            if hasattr(self.model_config, "use_cache"):
                 self.model_config.use_cache = False
-        logger.info(f'self.model_config : {self.model_config}')
+        logger.info(f"self.model_config : {self.model_config}")
         if self.torch_dtype == torch.float8_e4m3fn:
             with init_empty_weights():
-                self.model = AutoModelForCausalLM.from_config(config=self.model_config,
-                                                              torch_dtype=torch.float16,
-                                                              trust_remote_code=True)
+                self.model = AutoModelForCausalLM.from_config(
+                    config=self.model_config,
+                    torch_dtype=torch.float16,
+                    trust_remote_code=True,
+                )
             self.find_blocks()
             for block_idx, block in enumerate(self.blocks):
                 self.replace_module_block(LlmcFp8Linear, block, block_idx, {})
@@ -216,15 +235,15 @@ class BaseModel(metaclass=ABCMeta):
                 torch_dtype=self.torch_dtype,
                 low_cpu_mem_usage=True,
             )
-        logger.info(f'self.model : {self.model}')
+        logger.info(f"self.model : {self.model}")
 
     def load_fp8_weight(self):
         state_dict = self.model.state_dict()
-        model_index_file = os.path.join(self.model_path, 'model.safetensors.index.json')
+        model_index_file = os.path.join(self.model_path, "model.safetensors.index.json")
 
-        with open(model_index_file, 'r') as f:
+        with open(model_index_file, "r") as f:
             model_index = json.load(f)
-        weight_map = model_index['weight_map']
+        weight_map = model_index["weight_map"]
 
         shard_to_tensors = defaultdict(list)
         for weight_name in state_dict:
@@ -233,8 +252,8 @@ class BaseModel(metaclass=ABCMeta):
 
         for shard_path, tensor_names in shard_to_tensors.items():
             full_shard_path = os.path.join(self.model_path, shard_path)
-            logger.info(f'Loading FP8 shard: {full_shard_path}')
-            with safe_open(full_shard_path, framework='pt', device='cpu') as f:
+            logger.info(f"Loading FP8 shard: {full_shard_path}")
+            with safe_open(full_shard_path, framework="pt", device="cpu") as f:
                 for weight_name in tensor_names:
                     tensor = f.get_tensor(weight_name)
                     state_dict[weight_name] = tensor
@@ -251,7 +270,37 @@ class BaseModel(metaclass=ABCMeta):
         for ln_class in ln_class_list:
             if ln_class not in _TRANSFORMERS_LN_TYPES_:
                 _TRANSFORMERS_LN_TYPES_.append(ln_class)
-        logger.info(f'_TRANSFORMERS_LN_TYPES_ : {_TRANSFORMERS_LN_TYPES_}')
+        logger.info(f"_TRANSFORMERS_LN_TYPES_ : {_TRANSFORMERS_LN_TYPES_}")
+
+    def calculate_cuda_memory_usage(self, data_dict, step_index=None):
+        """Calculate memory usage of CUDA tensors in a dictionary of lists and
+        log it.
+
+        Args:
+            data_dict: Dictionary with lists of tensors as values
+            step_index: Optional index to include in the log message
+
+        Returns:
+            float: Memory usage in MB
+        """
+        mem_usage_cnt = defaultdict(int)
+        for tensor_name, tensor_list in data_dict.items():
+            if not isinstance(tensor_list, list):
+                tensor_list = [tensor_list]
+            for tensor in tensor_list:
+                if isinstance(tensor, torch.Tensor) and tensor.device.type == "cuda":
+                    cur_mem_usage = (
+                        tensor.element_size() * tensor.nelement() / 1024 / 1024
+                    )
+                    mem_usage_cnt[tensor_name] += cur_mem_usage
+
+        if step_index is not None:
+            logger.info(f"Forward {step_index + 1}:")
+
+        for tensor_name, mem_usage in mem_usage_cnt.items():
+            logger.info(f"{tensor_name}: {mem_usage:.2f} MB")
+
+        return mem_usage_cnt
 
     @torch.no_grad()
     def collect_first_block_input(self, calib_data, padding_mask=None):
@@ -259,8 +308,9 @@ class BaseModel(metaclass=ABCMeta):
 
         Catcher = self.get_catcher(first_block_input)
 
+        ori_block0_device = get_decoder_layer_ori_device(self.blocks[0])
         if not self.use_cpu_to_save_cuda_mem_for_catcher:
-            self.move_embed_to_device('cuda')
+            self.move_embed_to_device("cuda")
             if self.vision_model:
                 self.vision_model.cuda()
             if self.vision_projector:
@@ -272,11 +322,8 @@ class BaseModel(metaclass=ABCMeta):
             self.blocks[0] = self.blocks[0].cuda()
         self.blocks[0] = Catcher(self.blocks[0])
 
-        for data in calib_data:
-            data = {
-                k: (v.cuda() if torch.is_tensor(v) else v)
-                for k, v in data.items()
-            }
+        for i, data in enumerate(tqdm(calib_data, desc="Collect first block input")):
+            data = {k: (v.cuda() if torch.is_tensor(v) else v) for k, v in data.items()}
             try:
                 if not self.mm_model:
                     self.model(**data)
@@ -284,19 +331,23 @@ class BaseModel(metaclass=ABCMeta):
                     self.mm_model.generate(**data, max_new_tokens=128, do_sample=False)
             except ValueError:
                 pass
+
+        logger.info(f"the memory usage of first_block_input:")
+        self.calculate_cuda_memory_usage(first_block_input)
+
         self.first_block_input = first_block_input
-        assert len(self.first_block_input) > 0, 'Catch input data failed.'
+        assert len(self.first_block_input) > 0, "Catch input data failed."
         if padding_mask:
-            for idx in range(len(self.first_block_input['data'])):
-                token_num = self.first_block_input['data'][idx].shape[1]
+            for idx in range(len(self.first_block_input["data"])):
+                token_num = self.first_block_input["data"][idx].shape[1]
                 if token_num != padding_mask[idx].shape[1]:
                     padding_mask[idx] = F.pad(
                         padding_mask[idx],
                         self.get_one_pad_setting(
                             self.tokenizer.padding_side,
-                            token_num - padding_mask[idx].shape[1]
+                            token_num - padding_mask[idx].shape[1],
                         ),
-                        value=1
+                        value=1,
                     )
         self.padding_mask = padding_mask
         if not self.use_cpu_to_save_cuda_mem_for_catcher:
@@ -308,17 +359,17 @@ class BaseModel(metaclass=ABCMeta):
                 self.audio_model.cpu()
             if self.audio_projector:
                 self.audio_projector.cpu()
-            self.blocks[0] = self.blocks[0].cpu()
-            self.move_embed_to_device('cpu')
+            self.blocks[0].to(ori_block0_device)
+            self.move_embed_to_device("cpu")
         self.blocks[0] = self.blocks[0].module
 
     def get_one_pad_setting(self, padding_side, length):
-        if padding_side == 'left':
+        if padding_side == "left":
             return [0, length]
-        elif padding_side == 'right':
+        elif padding_side == "right":
             return [length, 0]
         else:
-            raise Exception(f'Not support padding_side: {padding_side}.')
+            raise Exception(f"Not support padding_side: {padding_side}.")
 
     def get_first_block_input(self):
         return self.first_block_input
@@ -357,63 +408,63 @@ class BaseModel(metaclass=ABCMeta):
 
     def set_mix_bits_params_dict(self, block_idx, name, params_dict):
 
-        logger.info('set_mix_bits_params_dict')
+        logger.info("set_mix_bits_params_dict")
 
         if not check_do_quant(
             block_idx,
             name,
-            params_dict['mix_bits_map'],
-            params_dict['quantizer_mix_bits'],
+            params_dict["mix_bits_map"],
+            params_dict["quantizer_mix_bits"],
         ):
             logger.info(
-                f'This layer {name} in {block_idx}-th block is set to float.'
-                'No need to replace this layer.'
+                f"This layer {name} in {block_idx}-th block is set to float."
+                "No need to replace this layer."
             )
             return params_dict
 
         params_mix_dict = {}
-        params_mix_dict['debug_print'] = {}
+        params_mix_dict["debug_print"] = {}
         wquantizer = get_wquantizer(
             block_idx,
             name,
-            params_dict['mix_bits_map'],
-            params_dict['quantizer_mix_bits'],
-            params_dict['wquantizer_default'],
+            params_dict["mix_bits_map"],
+            params_dict["quantizer_mix_bits"],
+            params_dict["wquantizer_default"],
         )
-        params_mix_dict['w_qdq'] = partial(params_dict['w_qdq'], wquantizer=wquantizer)
-        params_mix_dict['debug_print']['weight'] = {}
-        params_mix_dict['debug_print']['weight']['bit'] = wquantizer.bit
-        params_mix_dict['debug_print']['weight']['sym'] = wquantizer.sym
-        params_mix_dict['debug_print']['weight']['granularity'] = wquantizer.granularity
-        if wquantizer.granularity == 'per_group':
-            params_mix_dict['debug_print']['weight'][
-                'group_size'
+        params_mix_dict["w_qdq"] = partial(params_dict["w_qdq"], wquantizer=wquantizer)
+        params_mix_dict["debug_print"]["weight"] = {}
+        params_mix_dict["debug_print"]["weight"]["bit"] = wquantizer.bit
+        params_mix_dict["debug_print"]["weight"]["sym"] = wquantizer.sym
+        params_mix_dict["debug_print"]["weight"]["granularity"] = wquantizer.granularity
+        if wquantizer.granularity == "per_group":
+            params_mix_dict["debug_print"]["weight"][
+                "group_size"
             ] = wquantizer.group_size
         if not check_w_only(
             block_idx,
             name,
-            params_dict['mix_bits_map'],
-            params_dict['quantizer_mix_bits'],
-            params_dict['w_only_default'],
+            params_dict["mix_bits_map"],
+            params_dict["quantizer_mix_bits"],
+            params_dict["w_only_default"],
         ):
             aquantizer = get_aquantizer(
                 block_idx,
                 name,
-                params_dict['mix_bits_map'],
-                params_dict['quantizer_mix_bits'],
-                params_dict['aquantizer_default'],
+                params_dict["mix_bits_map"],
+                params_dict["quantizer_mix_bits"],
+                params_dict["aquantizer_default"],
             )
-            params_mix_dict['a_qdq'] = partial(
-                params_dict['a_qdq'], aquantizer=aquantizer
+            params_mix_dict["a_qdq"] = partial(
+                params_dict["a_qdq"], aquantizer=aquantizer
             )
-            params_mix_dict['debug_print']['act'] = {}
-            params_mix_dict['debug_print']['act']['bit'] = aquantizer.bit
-            params_mix_dict['debug_print']['act']['sym'] = aquantizer.sym
-            params_mix_dict['debug_print']['act'][
-                'granularity'
+            params_mix_dict["debug_print"]["act"] = {}
+            params_mix_dict["debug_print"]["act"]["bit"] = aquantizer.bit
+            params_mix_dict["debug_print"]["act"]["sym"] = aquantizer.sym
+            params_mix_dict["debug_print"]["act"][
+                "granularity"
             ] = aquantizer.granularity
         else:
-            params_mix_dict['a_qdq'] = None
+            params_mix_dict["a_qdq"] = None
         return params_mix_dict
 
     def replace_vision_module_all(self, module, params_dict, keep_device=False):
@@ -421,7 +472,7 @@ class BaseModel(metaclass=ABCMeta):
         for name, m in vision_model_linears.items():
             M = module.new(m, **params_dict)
 
-            name_tmp = name.rsplit('.', 1)
+            name_tmp = name.rsplit(".", 1)
             if len(name_tmp) == 2:
                 parent_name = name_tmp[0]
                 parent = self.vision_model.get_submodule(parent_name)
@@ -434,48 +485,62 @@ class BaseModel(metaclass=ABCMeta):
 
         gc.collect()
         torch.cuda.empty_cache()
-        logger.info(f'The Replaced vision_model: {self.vision_model}')
+        logger.info(f"The Replaced vision_model: {self.vision_model}")
 
     def replace_language_module_all(self, module, params_dict, keep_device=False):
         for block_idx in range(len(self.blocks)):
-            logger.info(f'Replace block index: {block_idx}/{len(self.blocks)}')
+            logger.info(f"Replace block index: {block_idx}/{len(self.blocks)}")
             if keep_device:
-                self.replace_module_block(module, self.blocks[block_idx], block_idx, params_dict)
+                self.replace_module_block(
+                    module, self.blocks[block_idx], block_idx, params_dict
+                )
             else:
-                self.blocks[block_idx].cuda()
-                self.replace_module_block(module, self.blocks[block_idx], block_idx, params_dict)
-                self.blocks[block_idx].cpu()
+                cur_block = self.blocks[block_idx]
+                ori_device = get_decoder_layer_ori_device(cur_block)
+                cur_block.cuda()
+                self.replace_module_block(module, cur_block, block_idx, params_dict)
+                # cur_block.cpu()
+                cur_block.to(ori_device)
             gc.collect()
             torch.cuda.empty_cache()
-        logger.info(f'The Replaced model: {self.model}')
+        logger.info(f"The Replaced model: {self.model}")
 
     def replace_module_block(self, module, block, block_idx, params_dict):
         if module in _LLMC_LN_TYPES_ + _TRANSFORMERS_LN_TYPES_:
             self.replace_module_layernorm(
-                module, block, self.get_layernorms_in_block(block), block_idx, params_dict
+                module,
+                block,
+                self.get_layernorms_in_block(block),
+                block_idx,
+                params_dict,
             )
         else:
-            self.replace_module_subset(module,
-                                       block,
-                                       {'layers': self.get_block_linears(block)},
-                                       block_idx,
-                                       params_dict)
+            self.replace_module_subset(
+                module,
+                block,
+                {"layers": self.get_block_linears(block)},
+                block_idx,
+                params_dict,
+            )
 
     def replace_module_subset(self, module, block, subset, block_idx, params_dict):
         if module in _LLMC_LINEAR_TYPES_ + _TRANSFORMERS_LINEAR_TYPES_:
             layers_dict = {
-                name: layer for name, layer in subset['layers'].items()
-                if isinstance(layer, tuple(_LLMC_LINEAR_TYPES_ + _TRANSFORMERS_LINEAR_TYPES_))
+                name: layer
+                for name, layer in subset["layers"].items()
+                if isinstance(
+                    layer, tuple(_LLMC_LINEAR_TYPES_ + _TRANSFORMERS_LINEAR_TYPES_)
+                )
             }
         else:
-            layers_dict = subset['layers']
+            layers_dict = subset["layers"]
 
         for name, m in layers_dict.items():
-            if hasattr(m, 'no_quant') and m.no_quant:
+            if hasattr(m, "no_quant") and m.no_quant:
                 continue
             # mix bits
             params_tmp_dict = {}
-            if 'mix_bits' in params_dict and params_dict['mix_bits']:
+            if "mix_bits" in params_dict and params_dict["mix_bits"]:
                 params_tmp_dict = self.set_mix_bits_params_dict(
                     block_idx, name, params_dict
                 )
@@ -484,7 +549,7 @@ class BaseModel(metaclass=ABCMeta):
 
             M = module.new(m, **params_tmp_dict)
 
-            name_tmp = name.rsplit('.', 1)
+            name_tmp = name.rsplit(".", 1)
             if len(name_tmp) == 2:
                 parent_name = name_tmp[0]
                 parent = block.get_submodule(parent_name)
@@ -493,10 +558,11 @@ class BaseModel(metaclass=ABCMeta):
                 parent = block
                 child_name = name_tmp[0]
 
+            # delattr(parent, child_name)
             setattr(parent, child_name, M)
             del M
 
-            logger.info(f'replace >>> {name} in {block_idx}-th block')
+            logger.info(f"replace >>> {name} in {block_idx}-th block")
 
         del layers_dict
         gc.collect()
@@ -508,7 +574,7 @@ class BaseModel(metaclass=ABCMeta):
                 continue
             M = module.new(m, **params_dict)
 
-            name_tmp = name.rsplit('.', 1)
+            name_tmp = name.rsplit(".", 1)
             if len(name_tmp) == 2:
                 parent_name = name_tmp[0]
                 parent = block.get_submodule(parent_name)
@@ -524,6 +590,6 @@ class BaseModel(metaclass=ABCMeta):
         gc.collect()
         torch.cuda.empty_cache()
 
-    def convert_dtype(self, dtype='torch.float16'):
+    def convert_dtype(self, dtype="torch.float16"):
         for i in range(len(self.blocks)):
             self.blocks[i] = self.blocks[i].to(dtype)

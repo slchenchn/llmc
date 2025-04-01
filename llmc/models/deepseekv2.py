@@ -5,7 +5,7 @@ from .base_model import BaseModel
 
 @MODEL_REGISTRY
 class DeepseekV2(BaseModel):
-    def __init__(self, config, device_map=None, use_cache=False):
+    def __init__(self, config, device_map=None, use_cache=True):
         super().__init__(config, device_map, use_cache)
 
     def find_blocks(self):
