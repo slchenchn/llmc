@@ -179,7 +179,7 @@ def auto_dispatch_model(model, config):
         dispatch_config = {}
 
     safe_margin = dispatch_config.get('safe_margin', 1)
-    first_gpu_extra_margin = dispatch_config.get('first_gpu_extra_margin', True)
+    first_gpu_extra_margin = dispatch_config.get('first_gpu_extra_margin', 1)
     num_gpus = dispatch_config.get('num_gpus', 8)
     device_map = calculate_offload_device_map(
         model.model,
@@ -352,7 +352,7 @@ if __name__ == '__main__':
 
         debugpy.listen(12345)
         debugpy.wait_for_client()
-        debugpy.breakpoint()
+        # debugpy.breakpoint()
 
     with open(args.config, 'r') as file:
         config = yaml.safe_load(file)

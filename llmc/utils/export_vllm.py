@@ -5,7 +5,7 @@ def update_vllm_quant_config(
     model,
     config,
     save_quant_path,
-    vllm_quant_method='w8a8_int',
+    vllm_quant_method='w8a8_int8',
 
 ):
     need_pack = config.quant.weight.get('need_pack', False)

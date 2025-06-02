@@ -163,6 +163,7 @@ class DeepseekV3(BaseModel):
                     'input': ['mlp.shared_experts.down_proj'],
                     'inspect': block.mlp.shared_experts.down_proj,
                     'has_kwargs': False,
+                    'is_mlp': True,
                 }
             )
         else:
@@ -176,6 +177,7 @@ class DeepseekV3(BaseModel):
                     'input': ['mlp.gate_proj'],
                     'inspect': block.mlp,
                     'has_kwargs': False,
+                    'is_mlp': True,
                 }
             )
 
@@ -186,6 +188,7 @@ class DeepseekV3(BaseModel):
                     'input': ['mlp.down_proj'],
                     'inspect': block.mlp.down_proj,
                     'has_kwargs': False,
+                    'is_mlp': True,
                 }
             )
 

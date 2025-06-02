@@ -92,7 +92,10 @@ def weight_cast_to_fp8_kernel(x_ptr, s_ptr, y_ptr, M, N, BLOCK_SIZE: tl.constexp
 
 
 def weight_cast_to_fp8(
-    x: torch.Tensor, s: torch.Tensor, block_size: int = 128
+    x: torch.Tensor,
+    s: torch.Tensor,
+    block_size: int = 128,
+    out_dtype: torch.dtype = torch.float8_e4m3fn,
 ) -> torch.Tensor:
     """Quantizes the given weight tensor using the provided scale tensor.
 
@@ -110,9 +113,7 @@ def weight_cast_to_fp8(
     assert x.is_contiguous() and s.is_contiguous(), "Input tensors must be contiguous"
     assert x.dim() == 2 and s.dim() == 2, "Input tensors must have 2 dimensions"
     M, N = x.size()
-    y = torch.empty_like(
-        x, dtype=torch.float8_e4m3fn
-    )  # Set the appropriate dtype (e.g., int8 for quantization)
+    y = torch.empty_like(x, dtype=out_dtype)
 
     def grid(meta):
         return (  # noqa
