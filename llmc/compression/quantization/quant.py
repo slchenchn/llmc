@@ -948,7 +948,7 @@ class IntegerQuantizer(BaseQuantizer):
 
         scales = scales * output_scale_factor
 
-        if self.bit == 8:
+        if self.bit in (4, 8):
             if self.qmin != 0:
                 dtype = torch.int8
             else:

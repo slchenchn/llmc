@@ -1,0 +1,39 @@
+FROM nvidia/cuda:12.6.1-cudnn-devel-ubuntu22.04 AS base
+
+WORKDIR /app
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN sed -i 's|http://archive.ubuntu.com/ubuntu/|https://mirrors.tuna.tsinghua.edu.cn/ubuntu/|g' /etc/apt/sources.list && \
+    sed -i 's|http://security.ubuntu.com/ubuntu/|https://mirrors.tuna.tsinghua.edu.cn/ubuntu/|g' /etc/apt/sources.list
+
+RUN apt-get update && \
+    apt-get install -y vim tmux zip unzip wget git cmake build-essential software-properties-common curl libibverbs-dev ca-certificates iproute2 ffmpeg libsm6 libxext6 htop && \
+    add-apt-repository ppa:deadsnakes/ppa && \
+    apt-get update && \
+    apt-get install -y python3.11 python3.11-venv python3.11-dev python3-pip && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 && \
+    update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1
+
+RUN python -m pip install --upgrade pip
+
+RUN pip config set global.index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple
+
+RUN pip install packaging ninja opencv-python
+
+# Install PyTorch and torchvision directly via pip
+RUN pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
+
+# Install flash-attention and fast-hadamard-transform via pip
+RUN pip install flash-attn --no-build-isolation
+RUN pip install fast-hadamard-transform
+
+COPY requirements/runtime.txt /app/
+
+RUN pip install --no-cache-dir -r /app/runtime.txt
+
+RUN rm -rf /app
+
+WORKDIR /workspace 

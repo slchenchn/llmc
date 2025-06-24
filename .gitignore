@@ -22,3 +22,10 @@ save*
 .log
 *.pid
 *.ipynb*
+data/
+checkpoints
+csl/
+analysis_model/
+logs/
+figs/
+lm-evaluation-harness/
