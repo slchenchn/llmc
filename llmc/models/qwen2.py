@@ -11,6 +11,7 @@ from .base_model import BaseModel
 class Qwen2(BaseModel):
     def __init__(self, config, device_map=None, use_cache=False):
         super().__init__(config, device_map, use_cache)
+        self.rotary_emb = self.model.model.rotary_emb
 
     def find_blocks(self):
         self.blocks = self.model.model.layers

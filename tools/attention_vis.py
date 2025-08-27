@@ -5,12 +5,12 @@ import sys
 import matplotlib.pyplot as plt
 import seaborn as sns
 import torch
-
-sys.path.append(os.path.join(os.path.dirname(__file__), '../'))
 from loguru import logger
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from llmc.utils import mkdirs
+
+sys.path.append(os.path.join(os.path.dirname(__file__), '../'))
 
 
 def attention_visualization(model, tokenizer, args):
@@ -36,7 +36,11 @@ def attention_visualization(model, tokenizer, args):
     for idx in head_idxs:
         attn_map = attention_map[0, idx].cpu().numpy()
         plt.figure(figsize=(10, 8))
-        sns.heatmap(attn_map, xticklabels=tokens, yticklabels=tokens, cmap='viridis')
+        sns.heatmap(
+            attn_map,
+            xticklabels=tokens,
+            yticklabels=tokens,
+            cmap='viridis')
         plt.title(f'Attention Map - Layer {layer_index + 1} Head {idx + 1}')
         plt.xlabel('Input Tokens')
         plt.ylabel('Output Tokens')

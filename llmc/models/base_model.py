@@ -147,10 +147,11 @@ class BaseModel(metaclass=ABCMeta):
     def get_num_attention_heads(self):
         return self.model_config.num_attention_heads
 
-    def apply_chat_template(self, prompt):
+    def apply_chat_template(self, prompt, chosen):
         messages = [
             {"role": "system", "content": "You are a helpful assistant."},
             {"role": "user", "content": prompt},
+            {"role": "assistant", "content": chosen},
         ]
         text = self.tokenizer.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True
@@ -166,27 +167,35 @@ class BaseModel(metaclass=ABCMeta):
     ):  # noqa
         assert calib_or_eval == "calib" or calib_or_eval == "eval"
         texts = []
-        for idx in range(len(samples)):
-            question = samples[idx]["question"]
-            if apply_chat_template:
-                question = self.apply_chat_template(question)
-            texts.append(question)
+        try:
+            for idx in range(len(samples)):
+                question = samples[idx]["question"]
+                chosen = samples[idx]["answer"]
+                if apply_chat_template:
+                    question = self.apply_chat_template(question, chosen)
+                else:
+                    question = question + chosen
+                texts.append(question)
+        except:
+            texts = samples["messages"]  # Dataset
+            texts = self.tokenizer.apply_chat_template(texts, tokenize=False)
         if not return_inputs:
             return texts
-        model_inputs = self.tokenizer(texts, return_tensors="pt", padding=True)
-        input_ids = model_inputs["input_ids"]
-        attention_mask = model_inputs["attention_mask"]
-        inputs = {
-            "input_ids": input_ids,
-            "attention_mask": attention_mask,
-        }
-        return inputs
+        model_inputs = self.tokenizer(texts)
+        # input_ids = model_inputs["input_ids"]
+        # attention_mask = model_inputs["attention_mask"]
+        # inputs = {
+        #     "input_ids": input_ids,
+        #     "attention_mask": attention_mask,
+        # }
+        return model_inputs
 
     def get_catcher(self, first_block_input):
         class Catcher(nn.Module):
             def __init__(self, module):
                 super().__init__()
                 self.module = module
+                self.attention_type = getattr(module, "attention_type", None)
                 self.signature = inspect.signature(module.forward)
 
             def forward(self, *args, **kwargs):
@@ -204,8 +213,7 @@ class BaseModel(metaclass=ABCMeta):
         return Catcher
 
     def __str__(self):
-        return f"\nConfig: \n{str(self.model_config)} \nModel: \n{
-            str(self.model)}"
+        return f"\nConfig: \n{str(self.model_config)} \nModel: \n{str(self.model)}"
 
     def build_model(self):
         self.model_config = AutoConfig.from_pretrained(
@@ -407,7 +415,6 @@ class BaseModel(metaclass=ABCMeta):
         return None
 
     def set_mix_bits_params_dict(self, block_idx, name, params_dict):
-
         logger.info("set_mix_bits_params_dict")
 
         if not check_do_quant(
@@ -420,7 +427,7 @@ class BaseModel(metaclass=ABCMeta):
                 f"This layer {name} in {block_idx}-th block is set to float."
                 "No need to replace this layer."
             )
-            return params_dict
+            return None
 
         params_mix_dict = {}
         params_mix_dict["debug_print"] = {}
@@ -431,15 +438,16 @@ class BaseModel(metaclass=ABCMeta):
             params_dict["quantizer_mix_bits"],
             params_dict["wquantizer_default"],
         )
+        params_mix_dict["w_q"] = partial(params_dict["w_q"], wquantizer=wquantizer)
         params_mix_dict["w_qdq"] = partial(params_dict["w_qdq"], wquantizer=wquantizer)
         params_mix_dict["debug_print"]["weight"] = {}
         params_mix_dict["debug_print"]["weight"]["bit"] = wquantizer.bit
         params_mix_dict["debug_print"]["weight"]["sym"] = wquantizer.sym
         params_mix_dict["debug_print"]["weight"]["granularity"] = wquantizer.granularity
         if wquantizer.granularity == "per_group":
-            params_mix_dict["debug_print"]["weight"][
-                "group_size"
-            ] = wquantizer.group_size
+            params_mix_dict["debug_print"]["weight"]["group_size"] = (
+                wquantizer.group_size
+            )
         if not check_w_only(
             block_idx,
             name,
@@ -460,9 +468,9 @@ class BaseModel(metaclass=ABCMeta):
             params_mix_dict["debug_print"]["act"] = {}
             params_mix_dict["debug_print"]["act"]["bit"] = aquantizer.bit
             params_mix_dict["debug_print"]["act"]["sym"] = aquantizer.sym
-            params_mix_dict["debug_print"]["act"][
-                "granularity"
-            ] = aquantizer.granularity
+            params_mix_dict["debug_print"]["act"]["granularity"] = (
+                aquantizer.granularity
+            )
         else:
             params_mix_dict["a_qdq"] = None
         return params_mix_dict
@@ -546,7 +554,10 @@ class BaseModel(metaclass=ABCMeta):
                 )
             else:
                 params_tmp_dict = params_dict
-
+            if not params_tmp_dict:
+                continue
+            if "quant_config" in params_dict:
+                params_tmp_dict["quant_config"] = params_dict["quant_config"]
             M = module.new(m, **params_tmp_dict)
 
             name_tmp = name.rsplit(".", 1)

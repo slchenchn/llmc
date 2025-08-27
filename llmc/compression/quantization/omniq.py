@@ -155,6 +155,10 @@ class OmniQuant(BaseBlockwiseQuantization):
     def block_transform(self, block, input_feat, block_kwargs):
         logger.info(f'Start transform the {self.block_idx}-th block')
 
+        if self.online_rotate:
+            with torch.no_grad():
+                self.replace_rotate_linears(block)
+
         with torch.no_grad():
             block.float()
 
@@ -201,10 +205,12 @@ class OmniQuant(BaseBlockwiseQuantization):
                         self.smooth_tmp_weight(block)
 
                     if self.position_ids is not None:
+                        pos_emb = self.rotary_emb(self.input['data'][i], self.position_ids)
                         quant_out = block(
                             self.input['data'][i],
                             attention_mask=self.batch_mask,
                             position_ids=self.position_ids,
+                            position_embeddings=pos_emb,
                         )[0]
                     else:
                         quant_out = block(

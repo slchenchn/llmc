@@ -18,7 +18,7 @@ from llmc.utils.registry_factory import KV_REGISTRY, TOKEN_REDUCTION_REGISTRY
 
 from ..blockwise_optimization import BlockwiseOpt
 from .attn_utils import _LLMC_ATTN_MAP_
-from .auto_clip import AutoClipper
+from .auto_clip import AutoClipper, AutoClipperV3, AutoClipperV4
 from .utils import is_fp8_supported_gpu
 
 if is_fp8_supported_gpu():
@@ -58,6 +58,7 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
     def __init__(self, model, quant_config, input, padding_mask, config):
         super().__init__(model, quant_config, input, padding_mask, config)
         self.set_quant_config()
+        self.rotary_emb = getattr(self.model, "rotary_emb", None)
 
     def w_qdq(self, module, wquantizer):
         args = {"lowbound_factor": None, "upbound_factor": None}
@@ -116,7 +117,18 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
                 params_dict["w_only_default"] = w_only
 
         elif mode in _REALQUANT_LINEAR_MAP_.keys():
-            params_dict["w_q"] = partial(self.w_q, wquantizer=self.wquantizer)
+            if self.mix_bits:
+                params_dict["mix_bits"] = True
+                params_dict["a_qdq"] = self.a_qdq
+                params_dict["w_qdq"] = self.w_qdq
+                params_dict["mix_bits_map"] = self.mix_bits_map
+                params_dict["quantizer_mix_bits"] = self.quantizer_mix_bits
+                params_dict["wquantizer_default"] = self.wquantizer
+                params_dict["aquantizer_default"] = self.aquantizer
+                params_dict["w_only_default"] = w_only
+                params_dict["w_q"] = self.w_q
+            else:
+                params_dict["w_q"] = partial(self.w_q, wquantizer=self.wquantizer)
             params_dict["quant_config"] = self.quant_config
 
         elif mode == "online_rotate":
@@ -158,10 +170,14 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
         for i in range(len(mix_bits_settings)):
             mix_bits_setting = mix_bits_settings[f"setting_{i}"]
             if mix_bits_setting["do_quant"]:
-                wquantizer_mix_bits = self.quant_module(**mix_bits_setting["weight"])
+                wquantizer_mix_bits = self.weight_quant_module(
+                    **mix_bits_setting["weight"]
+                )
                 if "act" in mix_bits_setting:
                     w_only_mix_bits = False
-                    aquantizer_mix_bits = self.quant_module(**mix_bits_setting["act"])
+                    aquantizer_mix_bits = self.act_quant_module(
+                        **mix_bits_setting["act"]
+                    )
                 else:
                     w_only_mix_bits = True
                 self.quantizer_mix_bits.append(
@@ -184,16 +200,13 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
                 )
 
         for i in range(len(self.quantizer_mix_bits)):
-            logger.info(
-                f"quantizer_mix_bits {i}: {
-                    self.quantizer_mix_bits[i]}"
-            )
+            logger.info(f"quantizer_mix_bits {i}: {self.quantizer_mix_bits[i]}")
             layer_name = self.quantizer_mix_bits[i]["layer_name"]
             for name in layer_name:
                 n_layeridx = name.split("#")
-                assert (
-                    len(n_layeridx) == 1 or len(n_layeridx) == 2
-                ), "layer_name in mix_bits must be name#1-3-4 or name."
+                assert len(n_layeridx) == 1 or len(n_layeridx) == 2, (
+                    "layer_name in mix_bits must be name#1-3-4 or name."
+                )
                 if len(n_layeridx) == 2:
                     n = n_layeridx[0]
                     layeridx = n_layeridx[1].split("-")
@@ -237,10 +250,7 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
                 self.weight_quant_module = IntegerQuantizer
         elif quant_type == "float-quant":
             self.weight_quant_module = FloatQuantizer
-        logger.info(
-            f"The used Weight Quant Module is {
-                self.weight_quant_module}"
-        )
+        logger.info(f"The used Weight Quant Module is {self.weight_quant_module}")
         self.wquantizer = self.weight_quant_module(**self.quant_config["weight"])
 
         # act
@@ -264,9 +274,9 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
             self.aquantizer = self.act_quant_module(**self.quant_config["act"])
             self.act_static = self.quant_config["act"].get("static", False)
             if self.act_static:
-                assert (
-                    self.quant_config["act"]["granularity"] == "per_tensor"
-                ), "Only support per_tensor static quant"
+                assert self.quant_config["act"]["granularity"] == "per_tensor", (
+                    "Only support per_tensor static quant"
+                )
             self.quant_attn = self.quant_config["act"].get("quant_attn", False)
             if self.quant_attn:
                 assert self.config["model"]["type"] in ["Vit", "DeepseekV2"]
@@ -288,21 +298,13 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
             logger.info(f"mix_bits_settings number: {len(mix_bits_settings)}")
             logger.info(
                 f"mix_bits_settings:\n"
-                f"{
-                    json.dumps(
-                        mix_bits_settings,
-                        ensure_ascii=False,
-                        indent=4)}"
+                f"{json.dumps(mix_bits_settings, ensure_ascii=False, indent=4)}"
             )
             self.alloc_bits(mix_bits_settings)
 
             logger.info(
                 f"self.mix_bits_map:\n"
-                f"{
-                    json.dumps(
-                        self.mix_bits_map,
-                        ensure_ascii=False,
-                        indent=4)}"
+                f"{json.dumps(self.mix_bits_map, ensure_ascii=False, indent=4)}"
             )
 
         # set kv cache quant config
@@ -337,20 +339,46 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
             if self.save_clip:
                 self.clip_path = special_config["clip_path"]
             self.clip_version = special_config.get("clip_version", "v1")
+            logger.info(f"weight_clip version: {self.clip_version}")
             if self.clip_version == "v2":
                 assert self.wquantizer.calib_algo == "learnable"
             clip_sym = special_config.get("clip_sym", self.wquantizer.sym)
-            self.auto_clipper = AutoClipper(
-                w_only=self.w_only,
-                mix_bits_map=self.mix_bits_map,
-                quantizer_mix_bits=self.quantizer_mix_bits,
-                wquantizer=self.wquantizer,
-                aquantizer=self.aquantizer,
-                clip_version=self.clip_version,
-                clip_sym=clip_sym,
-                save_clip=self.save_clip,
-                padding_mask=self.padding_mask,
-            )
+            if self.clip_version == "v3":
+                self.auto_clipper = AutoClipperV3(
+                    w_only=self.w_only,
+                    mix_bits_map=self.mix_bits_map,
+                    quantizer_mix_bits=self.quantizer_mix_bits,
+                    wquantizer=self.wquantizer,
+                    aquantizer=self.aquantizer,
+                    clip_version=self.clip_version,
+                    clip_sym=clip_sym,
+                    save_clip=self.save_clip,
+                    padding_mask=self.padding_mask,
+                )
+            elif self.clip_version == "v4":
+                self.auto_clipper = AutoClipperV4(
+                    w_only=self.w_only,
+                    mix_bits_map=self.mix_bits_map,
+                    quantizer_mix_bits=self.quantizer_mix_bits,
+                    wquantizer=self.wquantizer,
+                    aquantizer=self.aquantizer,
+                    clip_version=self.clip_version,
+                    clip_sym=clip_sym,
+                    save_clip=self.save_clip,
+                    padding_mask=self.padding_mask,
+                )
+            else:
+                self.auto_clipper = AutoClipper(
+                    w_only=self.w_only,
+                    mix_bits_map=self.mix_bits_map,
+                    quantizer_mix_bits=self.quantizer_mix_bits,
+                    wquantizer=self.wquantizer,
+                    aquantizer=self.aquantizer,
+                    clip_version=self.clip_version,
+                    clip_sym=clip_sym,
+                    save_clip=self.save_clip,
+                    padding_mask=self.padding_mask,
+                )
 
         # set transformation config
         self.save_scale = special_config.get("save_scale", False)
@@ -368,8 +396,8 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
             self.fp32_had = special_config.get("fp32_had", False)
         self.hidden_size = self.model.model_config.hidden_size
         self.set_model_config()
-        self.modality = self.quant_config.modality
-        logger.info(f"self.quant_objects : {self.quant_config.modality}")
+        self.modality = getattr(self.quant_config, "modality", "language")
+        logger.info(f"self.quant_objects : {self.modality}")
 
         # set token reduction config
         if "token_reduction" in self.quant_config:
@@ -384,7 +412,9 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
     def set_model_config(self):
         self.hidden_size = self.model.model_config.hidden_size
         self.num_heads = self.model.model_config.num_attention_heads
-        self.head_dim = getattr(self.model.model_config, "head_dim", self.hidden_size // self.num_heads)
+        self.head_dim = getattr(
+            self.model.model_config, "head_dim", self.hidden_size // self.num_heads
+        )
         if hasattr(self.model.model_config, "intermediate_size"):
             self.intermediate_size = self.model.model_config.intermediate_size
         if hasattr(self.model.model_config, "num_key_value_heads"):
@@ -543,7 +573,6 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
         return output
 
     def block_opt(self, block):
-
         if self.quant_kvcache:
             self.register_kv_cache(block)
 
@@ -753,9 +782,9 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
 
     @torch.no_grad()
     def apply_scale(self, scales, prev_op, layers):
-        assert (
-            len(prev_op) == 1
-        ), "Only support single prev_op. If multi prev_ops, code need to be updated."
+        assert len(prev_op) == 1, (
+            "Only support single prev_op. If multi prev_ops, code need to be updated."
+        )
         if isinstance(
             prev_op[0], tuple(_LLMC_LINEAR_TYPES_ + _TRANSFORMERS_LINEAR_TYPES_)
         ):
@@ -773,9 +802,9 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
         if shifts is None:
             return
 
-        assert (
-            len(prev_op) == 1
-        ), "Only support single prev_op. If multi prev_ops, code need to be updated."
+        assert len(prev_op) == 1, (
+            "Only support single prev_op. If multi prev_ops, code need to be updated."
+        )
         if isinstance(
             prev_op[0], tuple(_LLMC_LINEAR_TYPES_ + _TRANSFORMERS_LINEAR_TYPES_)
         ):
@@ -1086,9 +1115,9 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
 
     def set_no_quant_layer(self):
         if self.ignored_speical_names:
-            assert hasattr(
-                self.model, "block_name_prefix"
-            ), "block_name_prefix missing in model"
+            assert hasattr(self.model, "block_name_prefix"), (
+                "block_name_prefix missing in model"
+            )
         ignored_block_ids = []
         for item in self.ignored_block_ids:
             match = re.match(r"(\d+)-(\d+)", str(item))

@@ -42,6 +42,28 @@ def update_block_wise_scales(layer):
     layer.weight_scale_inv.data = llmc_scales
 
 
+def stochastic_round(x):
+    """
+    Stochastic rounding function that randomly rounds values up or down
+    based on their fractional part.
+    
+    Args:
+        x: Input tensor to be rounded
+        
+    Returns:
+        Tensor with stochastically rounded values
+    """
+    # Get the floor and fractional part
+    floor_x = torch.floor(x)
+    frac_x = x - floor_x
+    
+    # Generate random values in [0, 1) with same shape as x
+    random_vals = torch.rand_like(x)
+    
+    # Round up if random value is less than fractional part, otherwise round down
+    return floor_x + (random_vals < frac_x).float()
+
+
 class BaseQuantizer(object):
     def __init__(self, bit, symmetric, granularity, **kwargs):
         self.bit = bit
@@ -61,8 +83,12 @@ class BaseQuantizer(object):
 
         if self.kwargs.get("ste", False):
             self.round_func = lambda x: (x.round() - x).detach() + x
+        elif self.kwargs.get("round_func", None) == "stochastic":
+            logger.info("Using stochastic rounding")
+            self.round_func = stochastic_round
         else:
             self.round_func = torch.round
+
         if "ste_all" in self.kwargs and self.kwargs["ste_all"]:
             self.round_func = torch.round
             self.ste_all = True
@@ -175,6 +201,7 @@ class BaseQuantizer(object):
             )
 
             best = torch.full([_tensor.shape[0]], float("inf"), device=dev)
+            best_p = torch.full([_tensor.shape[0]], float("inf"), device=dev)
 
             best_min_val, best_max_val = _min_val, _max_val
 
@@ -208,6 +235,7 @@ class BaseQuantizer(object):
                     best[tmp] = err[tmp]
                     best_min_val[tmp] = xmin[tmp]
                     best_max_val[tmp] = xmax[tmp]
+                    best_p[tmp] = p
 
             (
                 min_val[b_num * bs : (b_num + 1) * bs, :],
@@ -571,7 +599,8 @@ class BaseQuantizer(object):
             zeros = torch.tensor(0.0)
         else:
             scales = (max_val - min_val).clamp(min=1e-5) / (qmax - qmin)
-            zeros = (qmin - torch.round(min_val / scales)).clamp(qmin, qmax)
+            # zeros = (qmin - torch.round(min_val / scales)).clamp(qmin, qmax)
+            zeros = (qmin - torch.round(min_val / scales))
             if not self.round_zp:
                 zeros = qmin - (min_val / scales)
         return scales, zeros, qmax, qmin

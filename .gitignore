@@ -29,3 +29,8 @@ analysis_model/
 logs/
 figs/
 lm-evaluation-harness/
+site-packages.bk/
+cache/
+.vercel
+get_data.py
+*.pkl

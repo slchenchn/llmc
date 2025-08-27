@@ -74,6 +74,7 @@ class SmoothQuant(BaseBlockwiseQuantization):
             return
         layers = list(layers_dict.values())
         scale = self.search_scale_subset(layers, input_feat[input_name])
+        logger.info(f'SmoothQuant {subset["input"][0]} scale: max: {scale.max()}, min: {scale.min()}, mean: {scale.mean()}')
         self.apply_scale(scale, prev_op, layers)
         if self.act_static:
             self.update_input_feat(scale, input_feat, layers_dict, False)

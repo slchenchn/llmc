@@ -30,6 +30,7 @@ class BaseEval:
             'mme',
             'custom_ppl',
             'custom_gen',
+            'ultrachat',
         ], 'Eval only support wikitext2, c4, ptb, custom, human_eval dataset now.'
         self.seq_len = self.eval_cfg.get('seq_len', None)
         self.num_samples = self.eval_cfg.get('num_samples', None)
@@ -65,6 +66,8 @@ class BaseEval:
                     testdata = load_dataset(
                         'ptb_text_only', 'penn_treebank', split='test'
                     )
+                elif self.dataset == 'ultrachat':
+                    testdata = load_from_disk(self.eval_dataset_path)
             else:
                 if self.dataset == 'custom_gen' or self.dataset == 'custom_ppl':
                     testdata = self.get_cutomdata(self.eval_dataset_path)
@@ -125,6 +128,12 @@ class BaseEval:
                                 apply_chat_template=self.apply_chat_template
                             )
                         )
+            elif self.dataset == 'ultrachat':
+                testenc = self.model.batch_process(
+                    testdata,
+                    calib_or_eval='eval',
+                    apply_chat_template=self.apply_chat_template
+                )
         return testenc
 
     def get_cutomdata(self, custom_dataset):

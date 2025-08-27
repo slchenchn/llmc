@@ -44,6 +44,15 @@ def download(calib_dataset_name, path):
         save_path = os.path.join(path, 'ultrachat')
         calib_dataset.save_to_disk(save_path)
         logger.info('download ultrachat for calib finished.')
+    if 'Mixture-of-Thoughts' in calib_dataset_name:
+        calib_dataset = load_dataset(
+            'open-r1/Mixture-of-Thoughts', 'all', split='train'
+        )
+        save_path = os.path.join(path, 'Mixture-of-Thoughts')
+        calib_dataset.save_to_disk(save_path)
+        logger.info('download Mixture-of-Thoughts for calib finished.')
+    else:
+        raise ValueError(f'Not support {calib_dataset_name} dataset.')
 
 
 if __name__ == '__main__':
@@ -51,7 +60,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--dataset_name',
         type=str,
-        default=['pileval', 'c4', 'wikitext2', 'ptb', 'ultrachat'],
+        # default=['pileval', 'c4', 'wikitext2', 'ptb', 'ultrachat'],
         nargs='*',
     )
     parser.add_argument('--save_path', type=str, required=True)
