@@ -4,7 +4,6 @@ import gc
 import json
 import os
 import re
-import time
 from collections import defaultdict
 from functools import partial
 
@@ -12,7 +11,6 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 from loguru import logger
-from tqdm import tqdm, trange
 
 from llmc.utils.registry_factory import KV_REGISTRY, TOKEN_REDUCTION_REGISTRY
 
@@ -51,7 +49,6 @@ from .quant import (
     Weight48IntegerQuantizer,
     update_block_wise_scales,
 )
-from .utils import check_do_quant, check_w_only, get_aquantizer, get_wquantizer
 
 
 class BaseBlockwiseQuantization(BlockwiseOpt):
@@ -115,6 +112,7 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
                 params_dict["wquantizer_default"] = self.wquantizer
                 params_dict["aquantizer_default"] = self.aquantizer
                 params_dict["w_only_default"] = w_only
+                params_dict["w_q"] = self.w_q
 
         elif mode in _REALQUANT_LINEAR_MAP_.keys():
             if self.mix_bits:
@@ -430,6 +428,7 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
     def replace_rotate_linears(self, block, exclude_keys=[]):
         for n, m in block.named_modules():
             if any(key in n for key in exclude_keys):
+                print(f'online_rotate exclude {n}')
                 continue
             if isinstance(m, nn.Linear) and (
                 "down_proj" in n or "o_proj" in n or "fc2" in n or "out_proj" in n
@@ -546,7 +545,7 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
 
         # input_data = self.move_to_cpu(input_data)
 
-        for i in trange(len(input_data), desc="block_forward"):
+        for i in range(len(input_data)):
             # input_data[i] = input_data[i].to(device=next(block.parameters()).device)
             input_data[i] = input_data[i].to("cuda")
             for k in self.input["kwargs"][i]:

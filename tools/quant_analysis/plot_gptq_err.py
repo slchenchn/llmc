@@ -1,18 +1,17 @@
 from pathlib import Path
 import json_repair
-import json
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import seaborn as sns
-import pandas as pd
 import numpy as np
+from matplotlib.colors import LogNorm
 
 
 def remove_from_list_no_err(lst, rms):
     for rm in rms:
         try:
             lst.remove(rm)
-        except:
+        except ValueError:
             pass
 
 
@@ -86,8 +85,6 @@ def plot_gptq_err(datas: dict, module_names: list = None, save_fig_dir: Path = N
         unique_modules.update(config_data.keys())
     unique_modules = sorted(list(unique_modules))
 
-    n_modules = len(unique_modules)
-
     colors = plt.cm.get_cmap("Set1").colors
     legends = "_".join(datas.keys())
 
@@ -159,6 +156,10 @@ def create_heatmap(plot_data, legends_dir: Path):
         non_nan_values = z_matrix[~np.isnan(z_matrix)]
         median_val = np.median(non_nan_values) if len(non_nan_values) > 0 else None
 
+        # Check if all values are positive for log scale
+        min_val = np.nanmin(z_matrix) if len(non_nan_values) > 0 else 0
+        use_log_norm = min_val > 0
+
         sns.heatmap(
             z_matrix,
             ax=ax,
@@ -168,6 +169,7 @@ def create_heatmap(plot_data, legends_dir: Path):
             annot=False,
             fmt=".4f",
             center=median_val,
+            norm=LogNorm() if use_log_norm else None,
         )
         plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
 
@@ -184,25 +186,12 @@ def create_heatmap(plot_data, legends_dir: Path):
 
 
 if __name__ == "__main__":
-    save_fig_dir = Path("figs/gptq_errs/qwen3-1.7B")
+    save_fig_dir = Path("figs/gptq_errs/qwen2.5-3B-it")
     log_paths = [
-        # "logs/step2_gptq_qwen3-14B_sym_w4a8_20250622_163459.log"
-        # "logs/step2_gptq_qwen3-8B_sym_w4a8_20250622_163619.log"
-        # "logs/gptq_qwen3-1.7B_sym_w4a8_20250623_184113.log",
-        # "logs/gptq_qwen3-1.7B_sym_w4a8_g64_20250623_184834.log",
-        # "logs/step2_gptq_qwen3-1.7B_sym_w8a8_20250622_145032.log",
-        # "logs/step2_gptq_qwen3-1.7B_sym_w4a8_20250622_143956.log",
-        "logs/step2_gptq_qwen3-1.7B_sym_w4a8_g64_20250622_144049.log",
-        "logs/step3_gptq_qwen3-1.7B_sym_w4a8_g64_20250625_134431.log"
-        # "logs/step2_gptq_qwen3-1.7B_asym_w4a8_g64_20250623_193117.log",
-        # 'logs/step2_gptq_qwen3-1.7B_sym_w4a8_g64_minmax_20250624_182515.log'
-        # "logs/step2_gptq_qwen3-1.7B_sym_w4a8_g64_b64_20250622_145917.log",
-        # "logs/step2_gptq_qwen3-1.7B_sym_w4a8_g8_20250622_150649.log",
-        # "logs/step2_gptq_qwen3-1.7B_sym_w4a8_g2_20250622_151309.log",
-        # "logs/step2_gptq_qwen3-1.7B_asym_w4a8_g2_20250622_160610.log",
-        # "logs/step2_gptq_qwen3-1.7B_sym_w4a8_g2_fs_20250622_152157.log",
-        # "logs/step2_gptq_qwen3-1.7B_sym_w4a8_g1_20250622_152310.log",
-        # "logs/step2_gptq_qwen3-1.7B_sym_w4a8_fa_20250623_140023.log",
+        "logs/step2_gptq_qwen2.5-3B-it_sym_w4a8_20250906_143211.log",
+        "logs/step2_gptq_qwen2.5-3B-it_sym_w4a8_force_dtype_20250906_174959.log",
+        # "logs/step2_gptq_qwen2.5-3B-it_sym_w4a8_fp32_20250906_163150.log",
+        "logs/step2_gptq_qwen2.5-3B-it_sym_w4a8_force_dtype_ultrachat_20250906_192030.log",
     ]
     datas = {}
     for log_path in log_paths:

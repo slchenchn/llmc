@@ -16,7 +16,7 @@ def get_args():
     parser.add_argument(
         "--model_path",
         type=str,
-        default="checkpoints/Qwen2.5-3B-Instruct/gptq/quarot_gptq_w4a16_sym/fake_quant_model",
+        default="checkpoints/Qwen2.5-3B-Instruct/gptq/quarot_gptq_w4a16g32_sym/fake_quant_model",
     )
     parser.add_argument("--output_path", type=str, default=None)
     args = parser.parse_args()

@@ -191,8 +191,6 @@ def auto_dispatch_model(model, config):
 
 
 def main(config):
-    import sys
-    sys.exit()
     model = MODEL_REGISTRY[config.model.type](config)
     auto_dispatch_model(model, config)
 

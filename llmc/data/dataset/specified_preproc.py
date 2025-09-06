@@ -143,6 +143,13 @@ def random_truncate_txt(calib_dataset, tokenizer, n_samples, seq_len):
 def ultrachat_general(
     calib_dataset, tokenizer, n_samples, seq_len, prefix_token_ids=None
 ):
+    """
+    对 ultrachat 格式的数据集进行预处理，生成用于校准的样本。处理流程：
+    1. 过滤掉长度小于 seq_len 的数据；
+    2. 若数据量不足 n_samples，则自动将长样本拆分为多个样本；
+    3. 若拆分后仍然不足 n_samples，则抛出异常
+    4. 截取每个样本的前 seq_len 个 token
+    """
     if prefix_token_ids is not None:
         warning_once("prefix_token_ids is not supported for ultrachat_general yet")
     # calib_dataset = calib_dataset.shuffle(seed=42).select(range(n_samples))
@@ -187,10 +194,10 @@ def ultrachat_general(
                 start_idx = i * seq_len
                 end_idx = start_idx + seq_len
                 expanded_ids.append(ids[start_idx:end_idx])
-        
+
         # 更新all_ids为拆分后的样本
         all_ids = expanded_ids
-        
+
         # 如果拆分后仍然不够，则抛出错误
         if len(all_ids) < n_samples:
             raise ValueError(

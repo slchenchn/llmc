@@ -28,3 +28,4 @@ from .stablelm import StableLm
 from .starcoder import Starcoder
 from .vila import Vila
 from .vit import Vit
+from .qwen3_moe import Qwen3MOE

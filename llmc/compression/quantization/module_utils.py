@@ -632,7 +632,7 @@ class EffcientFakeQuantLinear(nn.Module):
 
     @classmethod
     @torch.no_grad()
-    def new(cls, module, w_qdq, a_qdq, debug_print={}):
+    def new(cls, module, w_qdq, a_qdq, debug_print={}, w_q=None):
         weight = w_qdq(module)
 
         if module.bias is not None:
