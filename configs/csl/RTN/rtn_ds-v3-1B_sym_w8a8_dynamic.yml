@@ -1,0 +1,30 @@
+base:
+    seed: &seed 42
+model:
+    type: DeepseekV3
+    path: /data/chenshuailin/checkpoints/v2ray/DeepSeek-V3-1B-Test
+    # path: /data/chenshuailin/checkpoints/deepseek-ai/DeepSeek-R1-bf16
+    # type: Qwen2
+    # path: /data/chenshuailin/checkpoints/Qwen/Qwen2.5-7B-Instruct/
+    # type: Qwen2
+    # path: /data/chenshuailin/checkpoints/Qwen/Qwen2.5-7B-Instruct/
+    # path: /data/chenshuailin/checkpoints/Qwen/Qwen2.5-32B-Instruct
+    # path: /data/chenshuailin/checkpoints/Qwen/Qwen2.5-72B-Instruct
+    tokenizer_mode: fast
+    torch_dtype: torch.bfloat16
+quant:
+    method: RTN
+    weight:
+        bit: 8
+        symmetric: True
+        granularity: per_channel
+        # block_size: 128
+    act:
+        bit: 8
+        symmetric: True
+        granularity: per_token
+        # group_size: 128
+save:
+    # save_vllm: True
+    save_fake: True
+    save_path: /data/chenshuailin/checkpoints/llmc/DeepSeek-V3-1B-Test/RTN/sym_per-block-128_w8a8-dynamic

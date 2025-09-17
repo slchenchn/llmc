@@ -1,0 +1,31 @@
+base:
+    seed: &seed 42
+model:
+    type: Llama
+    path: /data/chenshuailin/checkpoints/unsloth/Llama-3.2-1B-Instruct
+    tokenizer_mode: fast
+    torch_dtype: torch.bfloat16
+quant:
+    method: Quarot
+    weight:
+        bit: 8
+        symmetric: True
+        granularity: per_channel
+        group_size: -1
+        calib_algo: minmax
+    act:
+        bit: 8
+        symmetric: True
+        granularity: per_token
+    special:
+        rotate_mode: hadamard
+        fp32_had: True
+        online_rotate: True
+save:
+    save_fake: True
+    save_trans: True
+    save_vllm: True
+    save_path: /data/chenshuailin/checkpoints/llmc/Llama-3.2-1B-Instruct/quarot/sym_w8a8-dynamic_ol-rotate
+dispatch:
+    first_gpu_extra_margin: 0.8
+    safe_margin: 0.9

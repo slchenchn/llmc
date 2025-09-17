@@ -426,13 +426,14 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
         )
         if self.is_nvfp4:
             assert self.true_sequential, "NVFP4 only supports true_sequential=True"
-            act_cfg = self.quant_config["act"]
-            assert act_cfg.get("quant_type", "int-quant") == "nvfp4"
-            assert act_cfg.get("bit", 8) == 4
-            assert act_cfg.get("symmetric", False)
-            assert act_cfg.get("granularity", "per_channel") == "per_group"
-            assert act_cfg.get("group_size", 322) == 16
-            assert act_cfg.get("static", False)
+            act_cfg = self.quant_config.get("act", {})
+            if act_cfg:
+                assert act_cfg.get("quant_type", "int-quant") == "nvfp4"
+                assert act_cfg.get("bit", 8) == 4
+                assert act_cfg.get("symmetric", False)
+                assert act_cfg.get("granularity", "per_channel") == "per_group"
+                assert act_cfg.get("group_size", 322) == 16
+                assert act_cfg.get("static", False)
 
     def set_model_config(self):
         self.hidden_size = self.model.model_config.hidden_size

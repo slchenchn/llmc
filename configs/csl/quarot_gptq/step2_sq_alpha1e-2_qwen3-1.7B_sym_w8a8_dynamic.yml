@@ -1,0 +1,40 @@
+base:
+    seed: &seed 42
+model:
+    type: Qwen2
+    path: checkpoints/Qwen3-1.7B/quarot/sym_w8_a8-dynamic/transformed_model
+    tokenizer_mode: fast
+    torch_dtype: torch.bfloat16
+calib:
+    name: pileval
+    download: False
+    path: data/pileval
+    n_samples: 512
+    bs: 4
+    seq_len: 1024
+    preproc: txt_general_preproc
+    seed: *seed
+quant:
+    method: SmoothQuant
+    weight:
+        bit: 8
+        symmetric: True
+        granularity: per_channel
+    act:
+        bit: 8
+        symmetric: True
+        granularity: per_tensor
+        # static: True
+        # calib_algo: static_minmax
+        # calib_algo: static_hist
+    special:
+        alpha: 0.01
+save:
+    save_vllm: True
+    save_trans: True
+    save_fake: True
+    save_path: checkpoints/Qwen3-1.7B/sq/quarot_sq_alpha1e-2_sym_w8a8_dynamic
+dispatch:
+    first_gpu_extra_margin: 0.6
+    safe_margin: 0.8
+    num_gpus: 1

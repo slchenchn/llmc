@@ -1,0 +1,35 @@
+base:
+    seed: &seed 42
+model:
+    type: DeepseekV3
+    path: /data/chenshuailin/checkpoints/deepseek-ai/DeepSeek-V2.5-1210
+    tokenizer_mode: fast
+    torch_dtype: auto
+quant:
+    method: Quarot
+    weight:
+        bit: 4
+        symmetric: True
+        granularity: per_channel
+    act:
+        bit: 8
+        symmetric: True
+        granularity: per_token
+    special:
+        rotate_mode: hadamard
+        fp32_had: True
+        online_rotate: False
+eval:
+    eval_pos: [pretrain, fake_quant]
+    name: wikitext2
+    download: False
+    path: data/wikitext2
+    seq_len: 2048
+    # For 7B / 13B model eval, bs can be set to "1", and inference_per_block can be set to "False".
+    # For 70B model eval, bs can be set to "20", and inference_per_block can be set to "True".
+    bs: 16
+    inference_per_block: True
+save:
+    save_trans: True
+    save_vllm: True
+    save_path: /data/chenshuailin/checkpoints/llmc/DeepSeek-V2.5_quarot-sym_w4_a8-token-dynamic

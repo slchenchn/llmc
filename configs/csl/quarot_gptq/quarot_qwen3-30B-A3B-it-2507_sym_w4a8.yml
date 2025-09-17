@@ -1,0 +1,38 @@
+base:
+    seed: &seed 42
+model:
+    type: Qwen3MOE
+    path: /data/chenshuailin/checkpoints/Qwen/Qwen3-30B-A3B-Instruct-2507
+    tokenizer_mode: fast
+    torch_dtype: torch.bfloat16
+quant:
+    method: Quarot
+    weight:
+        bit: 4
+        symmetric: True
+        granularity: per_channel
+    mix_bits:
+        setting_0:
+            layer_name: [mlp.gate]
+            do_quant: False
+            weight:
+                bit: 8
+                symmetric: True
+                granularity: per_channel
+    act:
+        bit: 8
+        symmetric: True
+        granularity: per_token
+    special:
+        rotate_mode: hadamard
+        fp32_had: True
+        online_rotate: False
+save:
+    save_trans: True
+    save_fake: True
+    save_vllm: True
+    save_path: checkpoints/Qwen3-30B-A3B-Instruct-2507/quarot/sym_w4a8
+dispatch:
+    num_gpus: 4
+    safe_margin: 0.8
+    first_gpu_extra_margin: 0.6

@@ -1,0 +1,25 @@
+base:
+    seed: &seed 42
+model:
+    type: DeepseekV3
+    path: /data/chenshuailin/checkpoints/deepseek-ai/DeepSeek-V2.5-1210
+    tokenizer_mode: fast
+    torch_dtype: auto
+quant:
+    method: Quarot
+    weight:
+        bit: 8
+        symmetric: True
+        granularity: per_channel
+    act:
+        bit: 8
+        symmetric: True
+        granularity: per_token
+    special:
+        rotate_mode: hadamard
+        fp32_had: True
+        online_rotate: False
+save:
+    save_trans: True
+    save_vllm: True
+    save_path: /data/chenshuailin/checkpoints/llmc/DeepSeek-V2.5_quarot-sym_w8_a8-token-dynamic

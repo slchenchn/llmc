@@ -1,0 +1,53 @@
+base:
+    seed: &seed 0
+model:
+    type: DeepseekV2
+    # Load Quarot-transformed model
+    path: /data/chenshuailin/checkpoints/llmc/DeepSeek-V2.5-sq-sym_w8a8-dynamic/transformed_model
+    torch_dtype: auto
+calib:
+    name: pileval
+    download: False
+    path: data/pileval
+    n_samples: 256
+    bs: 1
+    seq_len: 4096
+    preproc: txt_general_preproc
+    seed: *seed
+# eval:
+#     eval_pos: [fake_quant]
+#     name: pileval
+#     download: False
+#     path: data/pileval
+#     seq_len: 4096
+#     # For 7B / 13B model eval, bs can be set to "1", and inference_per_block can be set to "False".
+#     # For 70B model eval, bs can be set to "20", and inference_per_block can be set to "True".
+#     bs: 1
+#     inference_per_block: False
+quant:
+    method: GPTQ
+    weight:
+        bit: 8
+        symmetric: True
+        granularity: per_channel
+        group_size: -1
+        calib_algo: mse
+    act:
+        bit: 8
+        symmetric: True
+        granularity: per_token
+        calib_algo: minmax
+    special:
+        actorder: True
+        static_groups: True
+        percdamp: 0.01
+        blocksize: 128
+        chunk_num: 4
+        true_sequential: True
+        online_rotate: True
+        fp32_had: True
+    quant_out: True
+save:
+    save_trans: False
+    save_fake: False
+    save_path: /path/to/save/

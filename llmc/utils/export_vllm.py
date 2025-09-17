@@ -7,7 +7,7 @@ def update_vllm_quant_config(
     save_quant_path,
     vllm_quant_method="w8a8_int8",
 ):
-    if config.quant.weight.quant_type == "nvfp4":
+    if config.quant.weight.get("quant_type", "int-quant") == "nvfp4":
         _update_nvfp4_vllm_quant_config(
             model, config, save_quant_path, vllm_quant_method
         )

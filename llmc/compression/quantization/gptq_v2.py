@@ -384,8 +384,8 @@ class GPTQv2(BaseBlockwiseQuantization):
 
         feat_dict[name].append(quant_inp.cpu())
 
-        if self.act_static:
-            super().cache_input_hook(m, inp, out, name, feat_dict)
+        # if self.act_static:
+        #     super().cache_input_hook(m, inp, out, name, feat_dict)
 
     @torch.no_grad()
     def add_batch(self, layer, name, inp, out, fp_inp):
@@ -460,6 +460,8 @@ class GPTQv2(BaseBlockwiseQuantization):
                 "self_attn.k_proj",
                 "self_attn.v_proj",
             ):
+                # # DEBUG:
+                # print('debug')
                 assert torch.allclose(fp_chunk, chunk)
 
             dX = fp_chunk - chunk

@@ -24,7 +24,6 @@ save*
 *.ipynb*
 data/
 checkpoints
-csl/
 analysis_model/
 logs/
 figs/

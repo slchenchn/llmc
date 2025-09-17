@@ -1,0 +1,53 @@
+base:
+    seed: &seed 0
+model:
+    type: Qwen2
+    path: /data/chenshuailin/checkpoints/Qwen/Qwen3-4B
+    torch_dtype: auto
+calib:
+    name: wikitext2
+    download: False
+    path: data/wikitext2
+    n_samples: 1
+    bs: 1
+    seq_len: 8
+    preproc: wikitext2_gptq
+    seed: *seed
+eval:
+    eval_pos: [fake_quant]
+    name: wikitext2
+    download: False
+    path: data/wikitext2
+    seq_len: 2048
+    # For 7B / 13B model eval, bs can be set to "1", and inference_per_block can be set to "False".
+    # For 70B model eval, bs can be set to "20", and inference_per_block can be set to "True".
+    bs: 1
+    inference_per_block: False
+quant:
+    method: GPTQ
+    weight:
+        bit: 8
+        symmetric: True
+        granularity: per_channel
+        group_size: -1
+        calib_algo: mse
+    act:
+        bit: 8
+        symmetric: True
+        granularity: per_token
+        calib_algo: minmax
+    special:
+        actorder: True
+        static_groups: True
+        percdamp: 0.01
+        blocksize: 128
+        chunk_num: 4
+        true_sequential: True
+        # online_rotate: True
+        # fp32_had: True
+    quant_out: True
+save:
+    save_trans: True
+    save_fake: True
+    save_vllm: True
+    save_path: /data/chenshuailin/checkpoints/llmc/Qwen3-4B/gptq/sym_w8_a8-dynamic_wiki_ns128_seq2k

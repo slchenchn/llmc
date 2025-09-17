@@ -1,0 +1,49 @@
+base:
+    seed: &seed 42
+model:
+    type: Qwen2
+    path: /data/chenshuailin/checkpoints/Qwen/Qwen3-1.7B
+    torch_dtype: auto
+calib:
+    name: pileval
+    download: False
+    path: data/pileval
+    n_samples: 128
+    bs: -1
+    seq_len: 512
+    preproc: pileval_awq
+    seed: *seed
+# eval:
+#     eval_pos: [fake_quant]
+#     name: [wikitext2, c4]
+#     download: False
+#     path: ../cache/data/eval
+#     bs: 1
+#     inference_per_block: False
+#     seq_len: 2048
+#     tasks: piqa,arc_easy,arc_challenge,hellaswag,winogrande
+quant:
+    method: Awq
+    weight:
+        bit: 4
+        symmetric: False
+        granularity: per_channel
+        # group_size: 64
+        calib_algo: learnable
+        pack_version: gemm_pack
+    special:
+        trans: True
+        weight_clip: False
+        save_scale: True
+        clip_version: v1
+        scale_path: cache/activations/qwen3-1.7B/awq_w4a16_asym_noclip
+        save_clip: False
+        clip_path: cache/activations/qwen3-1.7B/awq_w4a16_asym_noclip
+save:
+    save_fake: True
+    save_autoawq: True
+    # save_trans: True
+    save_path: checkpoints/Qwen3-1.7B/awq/awq_w4a16_asym_noclip
+dispatch:
+    num_gpus: 1
+    # safe_margin: 0.5

@@ -1,0 +1,57 @@
+base:
+    seed: &seed 42
+model:
+    type: Qwen2
+    path: /data/chenshuailin/checkpoints/Qwen/Qwen3-1.7B
+    torch_dtype: auto
+calib:
+    name: c4
+    path: data/c4
+    preproc: c4_gptq
+    download: False
+    n_samples: 256
+    bs: 1
+    seq_len: 8192
+    seed: *seed
+# eval:
+#     eval_pos: [fake_quant]
+#     name: [wikitext2, c4]
+#     download: False
+#     path: ../cache/data/eval
+#     bs: 1
+#     seq_len: 2048
+#     inference_per_block: False
+#     tasks: piqa,arc_easy,arc_challenge,hellaswag,winogrande
+quant:
+    method: TesseraQ
+    weight:
+        bit: 4
+        symmetric: True
+        granularity: per_group
+        group_size: 64
+        calib_algo: minmax
+    special:
+        lr: 0.001
+        iterations: 250
+        wd: 0.0
+        batch_size: 1
+        deactive_amp: False
+        aug_loss: False
+        optimize_scale: True
+        scale_lr: 0.001 
+        thresholds: [0.75, 0.5, 0.375, 0.25, 0.125, 0.09, 0.06, 0.04, 0.02, 0.005]
+        weight_clip: False
+        load_transform: True
+        clip_version: v1
+        reduce_memory: False
+        scale_path: cache/activations/qwen3-1.7B/awq_w4a16g64_sym_noclip
+        clip_path: cache/activations/qwen3-1.7B/awq_w4a16g64_sym_noclip
+    quant_out: True
+save:
+    save_fake: True
+    save_vllm: True
+    save_path: checkpoints/Qwen3-1.7B/tesseraq/awq_tesseraq_w4a16g64_sym_s10_c4_noclip_seq8k
+dispatch:
+    num_gpus: 1
+    # safe_margin: 0.5
+    # first_gpu_extra_margin: 0

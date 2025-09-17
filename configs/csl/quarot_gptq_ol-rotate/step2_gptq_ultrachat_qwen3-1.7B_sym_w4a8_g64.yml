@@ -1,0 +1,47 @@
+base:
+    seed: &seed 0
+model:
+    type: Qwen2
+    # Load Quarot-transformed model
+    path: checkpoints/Qwen3-1.7B/quarot/sym_w8_a8-dynamic_ol-rotate/transformed_model
+    torch_dtype: auto
+calib:
+    name: custom_txt
+    download: False
+    path: data/ultrachat
+    n_samples: 128
+    bs: 1
+    seq_len: 2048
+    preproc: ultrachat_general
+    seed: *seed
+    padding: True
+quant:
+    method: GPTQ
+    weight:
+        bit: 4
+        symmetric: True
+        granularity: per_group
+        group_size: 64
+        calib_algo: mse
+    act:
+        bit: 8
+        symmetric: True
+        granularity: per_token
+        calib_algo: minmax
+    special:
+        actorder: True
+        static_groups: True
+        percdamp: 0.01
+        blocksize: 128
+        chunk_num: 4
+        true_sequential: True
+        online_rotate: True
+        fp32_had: True
+    quant_out: False
+save:
+    save_trans: True
+    save_fake: True
+    save_vllm: True
+    save_path: checkpoints/Qwen3-1.7B/gptq/quarot_ol_rotate_gptq_ultrachat_w4a8_g64_sym_dynamic
+dispatch:
+    num_gpus: 2

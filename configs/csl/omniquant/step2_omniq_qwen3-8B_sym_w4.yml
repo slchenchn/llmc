@@ -1,0 +1,63 @@
+base:
+    seed: &seed 2
+model:
+    type: Qwen2
+    path: checkpoints/Qwen3-8B/quarot/sym_w8_a8-dynamic/transformed_model
+    torch_dtype: auto
+calib:
+    name: wikitext2
+    download: False
+    path: data/wikitext2
+    n_samples: 128
+    bs: 1
+    seq_len: 2048
+    preproc: wikitext2_gptq
+    seed: *seed
+# eval:
+#     eval_pos: [fake_quant]
+#     name: wikitext2
+#     download: False
+#     path: data/wikitext2
+#     seq_len: 2048
+#     # For 7B / 13B model eval, bs can be set to "1", and inference_per_block can be set to "False".
+#     # For 70B model eval, bs can be set to "20", and inference_per_block can be set to "True".
+#     bs: 1
+#     inference_per_block: False
+quant:
+    method: OmniQuant
+    weight:
+        bit: 4
+        symmetric: True
+        granularity: per_channel
+        group_size: -1
+        calib_algo: learnable
+        ste: True
+    # act:
+    #     bit: 8
+    #     symmetric: True
+    #     granularity: per_token
+    #     ste: True
+    special:
+        aug_loss: False
+        let: False
+        lwc: True
+        lwc_lr: 0.001
+        # Set "let_lr: 0.001" for w4a4 quantization.
+        let_lr: 0.005
+        # Set to "True" if the model has bias (e.g. Opt).
+        use_shift: False
+        # Use "0.75" for w4a4 quantization.
+        alpha: 0.75
+        deactive_amp: True
+        epochs: 20
+        wd: 0
+    quant_out: False
+save:
+    save_trans: True
+    save_fake: True
+    save_vllm: True
+    save_path: checkpoints/Qwen3-8B/omniq/quarot_omniq_w4_sym_dynamic
+dispatch:
+    first_gpu_extra_margin: 0.4
+    safe_margin: 0.4
+    num_gpus: 4

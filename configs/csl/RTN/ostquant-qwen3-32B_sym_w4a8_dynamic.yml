@@ -1,0 +1,23 @@
+base:
+    seed: &seed 42
+model:
+    type: Qwen2
+    path: /ms/FM/wuwenxian/project/quant/OSTQuant/translate/Qwen3-32B_w4a8_no-qk-smooth_no-Rov-seq2k/after_gptq
+    tokenizer_mode: fast
+    torch_dtype: torch.bfloat16
+quant:
+    method: RTN
+    weight:
+        bit: 4
+        symmetric: True
+        granularity: per_channel
+    act:
+        bit: 8
+        symmetric: True
+        granularity: per_token
+save:
+    save_vllm: True
+    save_path: /ms/FM/wuwenxian/project/quant/OSTQuant/translate/Qwen3-32B_w4a8_no-qk-smooth_no-Rov-seq2k/after_gptq_w4a8_dynamic
+dispatch:
+    num_gpus: 2
+    safe_margin: 0.5

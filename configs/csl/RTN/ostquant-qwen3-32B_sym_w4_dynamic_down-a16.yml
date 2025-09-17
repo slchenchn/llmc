@@ -1,0 +1,23 @@
+base:
+    seed: &seed 42
+model:
+    type: Qwen2
+    path: /ms/FM/chenshuailin/projects/quant/OSTQuant/output/qwen3_32B-kl_top-w4a8-no_qk_smooth_seq2k_down-w4a16_convert/after_gptq
+    tokenizer_mode: fast
+    torch_dtype: torch.bfloat16
+quant:
+    method: RTN
+    weight:
+        bit: 4
+        symmetric: True
+        granularity: per_channel
+    mix_bits:
+        setting_0:
+            layer_name: [down_proj]
+            do_quant: False
+save:
+    save_vllm: True
+    save_path: /ms/FM/chenshuailin/projects/quant/OSTQuant/output/qwen3_32B-kl_top-w4a8-no_qk_smooth_seq2k_down-w4a16_convert/after_gptq_w4a8_dynamic
+dispatch:
+    num_gpus: 2
+    safe_margin: 0.5

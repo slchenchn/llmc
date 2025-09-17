@@ -1,0 +1,62 @@
+base:
+    seed: &seed 42
+model:
+    type: Qwen2
+    # Load Quarot-transformed model
+    path: checkpoints/Qwen3-1.7B/quarot/sym_w8_a8-dynamic_ol-rotate/transformed_model
+    torch_dtype: auto
+calib:
+    name: c4
+    download: False
+    n_samples: 512
+    path: data/c4
+    bs: 1
+    seq_len: 2048
+    preproc: c4_gptq
+    seed: *seed
+# eval:
+#     eval_pos: [fake_quant]
+#     name: [wikitext2]
+#     download: False
+#     path: data/wikitext2
+#     bs: 1
+#     seq_len: 2048
+#     inference_per_block: False
+#     tasks: piqa,arc_easy,arc_challenge,hellaswag,winogrande
+quant:
+    method: TesseraQ
+    weight:
+        bit: 4
+        symmetric: True
+        granularity: per_group
+        group_size: -1
+        group_size: 64
+        calib_algo: minmax
+    special:
+        lr: 0.001
+        iterations: 250
+        wd: 0.0
+        batch_size: 4
+        deactive_amp: False
+        aug_loss: False
+        optimize_scale: True
+        scale_lr: 0.001
+        thresholds: [0.75, 0.5, 0.375, 0.25, 0.125, 0.09, 0.06, 0.04, 0.02, 0.005]
+        weight_clip: True
+        load_transform: False
+        clip_version: v1
+        reduce_memory: True
+        rotate_mode: hadamard
+        fp32_had: True
+        online_rotate: True
+        # scale_path: ../cache/activations/L2_7b/awq_w4a4
+        # clip_path: ../cache/activations/L2_7b/awq_w4a4
+    quant_out: True
+save:
+    save_trans: True
+    save_fake: True
+    save_vllm: True
+    save_path: checkpoints/Qwen3-1.7B/tesseraq/quarot_ol_rotate_tesseraq_w4a16_sym_s10_dynamic_g64
+dispatch:
+    num_gpus: 2
+    safe_margin: 0.5

@@ -1,0 +1,39 @@
+base:
+    seed: &seed 0
+model:
+    type: Qwen2
+    path: checkpoints/Qwen2.5-3B-Instruct/quarot/sym_w4a8_dynamic/transformed_model
+    torch_dtype: auto
+calib:
+    name: wikitext2
+    download: False
+    path: data/wikitext2
+    n_samples: 128
+    bs: 1
+    seq_len: 2048
+    preproc: wikitext2_gptq
+    seed: *seed
+quant:
+    method: GPTQ
+    weight:
+        bit: 4
+        symmetric: True
+        granularity: per_channel
+        calib_algo: mse
+    special:
+        actorder: True
+        static_groups: True
+        percdamp: 0.01
+        blocksize: 128
+        chunk_num: 4
+        true_sequential: True
+        online_rotate: False
+        fp32_had: True
+    quant_out: True
+save:
+    # save_trans: True
+    save_fake: True
+    save_vllm: True
+    save_path: checkpoints/Qwen2.5-3B-Instruct/gptq/quarot_gptq_w4a16_sym
+dispatch:
+    num_gpus: 1
