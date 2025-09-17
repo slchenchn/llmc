@@ -1,12 +1,10 @@
-import json
 import re
 from collections import defaultdict
 from pathlib import Path
 import numpy as np
 
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-from tqdm import tqdm, trange
+import matplotlib.pyplot as plt
+from tqdm import tqdm
 
 
 def read_log_v2(log_path: Path):
@@ -157,14 +155,26 @@ def plot_weight_across_layers(
     subplot_titles = [
         f"{m} of '{p}'" for p in pattern_list for m in metric_list
     ]
-    fig = make_subplots(
-        rows=num_rows,
-        cols=num_cols,
-        subplot_titles=subplot_titles,
-        shared_xaxes=False,
-        vertical_spacing=0.1,
-        horizontal_spacing=0.12,
+    fig, axes = plt.subplots(
+        num_rows,
+        num_cols,
+        figsize=(7 * num_cols, 4 * num_rows),
+        sharex=False,
+        sharey=False
     )
+    
+    # Handle single subplot case
+    if num_rows == 1 and num_cols == 1:
+        axes = [axes]
+    elif num_rows == 1 or num_cols == 1:
+        axes = axes.flatten()
+    else:
+        axes = axes.flatten()
+    
+    # Set subplot titles
+    for i, title in enumerate(subplot_titles):
+        if i < len(axes):
+            axes[i].set_title(title, fontsize=14)
 
     # Visualization configuration
     model_colors = [
@@ -262,18 +272,17 @@ def plot_weight_across_layers(
                         label = metric_labels.get(distance_metric, distance_metric)
                         legend_name = f"{model_name} ({label}: {dist_info[distance_metric]:.3f})"
 
+                # Calculate subplot index
+                subplot_idx = (row_idx - 1) * num_cols + (col_idx - 1)
+                ax = axes[subplot_idx]
+                
                 y_values_to_plot = y_values
                 if smoothing_alpha > 0 and len(y_values) > 1:
-                    fig.add_trace(
-                        go.Scatter(
-                            x=x_values, y=y_values, mode="lines",
-                            showlegend=False, opacity=0.3,
-                            line=dict(
-                                color=model_colors[i % len(model_colors)],
-                                width=2, dash="dot",
-                            ),
-                        ),
-                        row=row_idx, col=col_idx,
+                    # Plot original data with low opacity
+                    ax.plot(
+                        x_values, y_values, 
+                        color=model_colors[i % len(model_colors)],
+                        linewidth=2, linestyle=':', alpha=0.3
                     )
                     smoothed_y = []
                     last_val = y_values[0]
@@ -284,56 +293,44 @@ def plot_weight_across_layers(
                         smoothed_y.append(last_val)
                     y_values_to_plot = smoothed_y
                 
-                fig.add_trace(
-                    go.Scatter(
-                        x=x_values, y=y_values_to_plot, mode="lines+markers",
-                        name=legend_name,
-                        legendgroup=model_name,
-                        showlegend=show_legend_for_trace,
-                        opacity=opacity,
-                        line=dict(
-                            color=model_colors[i % len(model_colors)],
-                            width=3, dash=dash_style,
-                        ),
-                        marker=dict(size=8),
-                    ),
-                    row=row_idx, col=col_idx,
+                # Plot main data
+                ax.plot(
+                    x_values, y_values_to_plot, 
+                    color=model_colors[i % len(model_colors)],
+                    linewidth=3, linestyle=dash_style,
+                    marker='o', markersize=8, alpha=opacity,
+                    label=legend_name if show_legend_for_trace else None
                 )
 
     # Configure layout
-    title_text = f"Comparison Across Layers"
+    title_text = "Comparison Across Layers"
     if ref_model:
         title_text += f" (Distances relative to {ref_model})"
     if smoothing_alpha > 0:
         title_text += f" (Smoothed: {smoothing_alpha})"
 
-    fig.update_layout(
-        title=title_text,
-        height=400 * num_rows + 200,
-        width=700 * num_cols,
-        showlegend=True,
-        legend=dict(
-            orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
-        ),
-        font=dict(size=14),
-        title_font=dict(size=24),
-        margin=dict(l=120, r=100, t=20, b=20),
-    )
+    fig.suptitle(title_text, fontsize=24, y=0.98)
     
-    for r in range(1, num_rows + 1):
-        for c in range(1, num_cols + 1):
-            fig.update_xaxes(
-                title_text="Layer Index",
-                title_standoff=10,
-                automargin=True,
-                showgrid=True, gridwidth=1, gridcolor="LightGray", row=r, col=c
-            )
-            fig.update_yaxes(
-                title_text=metric_list[c-1], type="log", 
-                title_standoff=20,
-                automargin=True,
-                showgrid=True, gridwidth=1, gridcolor="LightGray", row=r, col=c
-            )
+    # Configure subplots
+    for r in range(num_rows):
+        for c in range(num_cols):
+            subplot_idx = r * num_cols + c
+            if subplot_idx < len(axes):
+                ax = axes[subplot_idx]
+                ax.set_xlabel("Layer Index", fontsize=14)
+                ax.set_ylabel(metric_list[c], fontsize=14)
+                ax.set_yscale('log')
+                ax.grid(True, alpha=0.3)
+                ax.tick_params(labelsize=12)
+    
+    # Configure legend
+    handles, labels = axes[0].get_legend_handles_labels()
+    if handles:
+        fig.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, 0.95), 
+                  ncol=min(len(handles), 4), fontsize=12)
+    
+    plt.tight_layout()
+    plt.subplots_adjust(top=0.9)
 
 
     # Save the figure
@@ -342,7 +339,8 @@ def plot_weight_across_layers(
     per_weight_dir = save_dir / "per_weight" / safe_pattern_name
     per_weight_dir.mkdir(parents=True, exist_ok=True)
     output_path = per_weight_dir / f"{safe_metric_name}_across_layers.png"
-    fig.write_image(output_path)
+    fig.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.close(fig)  # Close figure to free memory
     print(f"Figure saved as {output_path}")
 
     # Note: Distance results are not saved to a file in the multi-plot version for simplicity.
@@ -354,12 +352,12 @@ if __name__ == "__main__":
         # "RTN-NVFP4":"analysis_model/Qwen3-1.7B/RTN-NVFP4/outlier_degree_kurtosis_absmax_20250814_032127.log",
         # "QAT-post-NVFP4": "analysis_model/Qwen3-1.7B/QAT-post-NVFP4/outlier_degree_kurtosis_absmax_20250814_024803.log",
 
-        "bf16": "analysis_model/Qwen3-1.7B/bf16/outlier_degree_kurtosis_absmax_20250814_063938.log",
-        "QAT-pre-NVFP4": "analysis_model/Qwen3-1.7B/QAT-pre-NVFP4/outlier_degree_kurtosis_absmax_20250814_023237.log",
+        "bf16": "analysis_model/Qwen2.5-3B-Instruct/bf16/outlier_degree_kurtosis_absmax_20250917_093429.log",
+        # "QAT-pre-NVFP4": "analysis_model/Qwen3-1.7B/QAT-pre-NVFP4/outlier_degree_kurtosis_absmax_20250814_023237.log",
     }
     ref = None
     smoothing_alpha = 0
-    save_dir = Path("analysis_model/Qwen3-1.7B/compare_bf16_quarot")
+    save_dir = Path("analysis_model/Qwen2.5-3B-Instruct/compare_bf16_quarot")
 
     vis_metrics = [
         "weight.absmax|weight.kurtosis",
@@ -375,7 +373,7 @@ if __name__ == "__main__":
         # "act.outlier_degree.min outlier degree",
     ]
     vis_weight_patterns = [
-        "down_proj|up_proj",
+        "down_proj|gate_proj",
         "q_proj|v_proj",
         # "down_proj",
         # "up_proj",

@@ -16,17 +16,17 @@ def get_args():
     parser.add_argument(
         "--model_path",
         type=str,
-        default="checkpoints/Qwen2.5-3B-Instruct/gptq/quarot_gptq_w4a16_sym/fake_quant_model",
+        default="checkpoints/Qwen2.5-3B-Instruct/quarot/nvfp4_w4a16_sgs_olrotate/transformed_model",
     )
     parser.add_argument("--output_path", type=str, default=None)
     args = parser.parse_args()
 
     args.model_path = Path(args.model_path)
-    assert args.model_path.name == "fake_quant_model", (
-        "model_path must be a fake_quant_model"
+    assert args.model_path.name in ("fake_quant_model", "transformed_model"), (
+        "model_path must be a fake_quant_model or transformed_model"
     )
     if args.output_path is None:
-        args.output_path = args.model_path.parent / "fake_quant_model_cleaned"
+        args.output_path = args.model_path.parent / f"{args.model_path.name}_cleaned"
 
     return args
 

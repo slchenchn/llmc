@@ -25,9 +25,16 @@ from llmc.compression.token_reduction import *
 from llmc.data import BaseDataset
 from llmc.eval.utils import eval_model, get_eval_list
 from llmc.models import *
-from llmc.utils import (check_config, deploy_all_modality, get_modality,
-                        mkdirs, print_important_package_version, seed_all,
-                        update_autoawq_quant_config, update_vllm_quant_config)
+from llmc.utils import (
+    check_config,
+    deploy_all_modality,
+    get_modality,
+    mkdirs,
+    print_important_package_version,
+    seed_all,
+    update_autoawq_quant_config,
+    update_vllm_quant_config,
+)
 from llmc.utils.registry_factory import ALGO_REGISTRY, MODEL_REGISTRY
 
 
@@ -46,7 +53,7 @@ def calculate_per_gpu_quantization_memory(
 
     for name, module in model.named_modules():
         if isinstance(module, nn.Linear):
-            device = 'cpu'
+            device = "cpu"
             for k, v in device_map.items():
                 if name.startswith(k):
                     device = v
@@ -111,7 +118,7 @@ def calculate_offload_device_map(
 
         memory_limits[0] *= first_gpu_extra_margin
 
-        memory_limits['cpu'] = max_cpu_memory
+        memory_limits["cpu"] = max_cpu_memory
         print(f"{memory_limits=}")
 
         initial_device_map = infer_auto_device_map(
@@ -141,11 +148,11 @@ def dispatch_model(model, device_map):
             if device >= 0:
                 device_map[key] = f"cuda:{device}"  # noqa: E231
             else:
-                device_map[key] = 'cpu'
+                device_map[key] = "cpu"
 
     # Dispatch model components based on longest prefix matching
     for i, block in tqdm(
-        enumerate(model.model.model.layers), desc='Dispatching model by prefix'
+        enumerate(model.model.model.layers), desc="Dispatching model by prefix"
     ):
         layer_name = f"model.layers.{i}"
         # Find the longest matching prefix
@@ -178,9 +185,9 @@ def auto_dispatch_model(model, config):
     except BaseException:
         dispatch_config = {}
 
-    safe_margin = dispatch_config.get('safe_margin', 1)
-    first_gpu_extra_margin = dispatch_config.get('first_gpu_extra_margin', 1)
-    num_gpus = dispatch_config.get('num_gpus', 8)
+    safe_margin = dispatch_config.get("safe_margin", 1)
+    first_gpu_extra_margin = dispatch_config.get("first_gpu_extra_margin", 1)
+    num_gpus = dispatch_config.get("num_gpus", 8)
     device_map = calculate_offload_device_map(
         model.model,
         safe_margin=safe_margin,
@@ -191,8 +198,6 @@ def auto_dispatch_model(model, config):
 
 
 def main(config):
-    import sys
-    sys.exit()
     model = MODEL_REGISTRY[config.model.type](config)
     auto_dispatch_model(model, config)
 
@@ -204,8 +209,8 @@ def main(config):
     for modality, modality_config in zip(modalities, modality_configs):
         model.set_modality(modality)
         eval_list = get_eval_list(model, config)
-        eval_model(model, None, eval_list, eval_pos='pretrain')
-        if not config.get('calib', False):
+        eval_model(model, None, eval_list, eval_pos="pretrain")
+        if not config.get("calib", False):
             blockwise_opt = ALGO_REGISTRY[modality_config.method](
                 model,
                 modality_config,
@@ -237,97 +242,102 @@ def main(config):
             dist.barrier()
 
     print(">> end of blockwise transform")
-    eval_model(model, blockwise_opts, eval_list, eval_pos='transformed')
-    if int(os.environ['RANK']) == 0:
-        if 'save' in config and config.save.get('save_trans', False):
+    eval_model(model, blockwise_opts, eval_list, eval_pos="transformed")
+    if int(os.environ["RANK"]) == 0:
+        if "save" in config and config.save.get("save_trans", False):
             print(">> save transformed model")
             blockwise_opt.save_model(save_trans_path)
 
-        if 'save' in config and config.save.get('save_trtllm', False):
+        if "save" in config and config.save.get("save_trtllm", False):
             blockwise_opt.save_model(save_trtllm_trans_path)
             from llmc.utils.export_trtllm import cvt_trtllm_engine
 
             cvt_trtllm_engine(
                 save_trtllm_trans_path,
                 save_trtllm_engine_path,
-                config.save.get('trtllm_cfg'),
+                config.save.get("trtllm_cfg"),
             )
 
-        eval_model(model, blockwise_opts, eval_list, eval_pos='fake_quant')
-        eval_model(model, blockwise_opts, eval_list, eval_pos='fake_quant_wo_kv')
+        eval_model(model, blockwise_opts, eval_list, eval_pos="fake_quant")
+        eval_model(model, blockwise_opts, eval_list, eval_pos="fake_quant_wo_kv")
 
-        if 'save' in config and config.save.get('save_fake', False):
-            deploy_all_modality(blockwise_opts, 'fake_quant')
+        if "save" in config and config.save.get("save_fake", False):
+            deploy_all_modality(blockwise_opts, "fake_quant")
             blockwise_opt.save_model(save_fake_path)
 
-        if 'save' in config:
+        if "save" in config:
             if (
-                config.save.get('save_vllm', False)
-                or config.save.get('save_sgl', False)
-                or config.save.get('save_lightllm', False)
+                config.save.get("save_vllm", False)
+                or config.save.get("save_sgl", False)
+                or config.save.get("save_lightllm", False)
+                or config.save.get("save_vllm_nvfp4", False)
             ):
                 for modality_config in modality_configs:
-                    w, a = modality_config.weight, modality_config.get('act')
+                    w, a = modality_config.weight, modality_config.get("act")
 
                     if isinstance(w.bit, str):
-                        assert w.symmetric, 'Only symmetric quant is supported.'
-                        assert w.bit in ['e4m3', 'e3m4'], 'Supported quant: w8a16.'
+                        assert w.symmetric, "Only symmetric quant is supported."
+                        assert w.bit in ["e4m3", "e3m4"], "Supported quant: w8a16."
                         if a:
-                            assert (
-                                w.symmetric and a.symmetric
-                            ), 'Only symmetric quant is supported.'
+                            assert w.symmetric and a.symmetric, (
+                                "Only symmetric quant is supported."
+                            )
                             assert (
                                 w.bit == a.bit
-                                and w.bit in ['e4m3', 'e5m2']
-                                and a.bit in ['e4m3', 'e5m2']
-                            ), 'Only WA FP8 quant is supported'
+                                and w.bit in ["e4m3", "e5m2"]
+                                and a.bit in ["e4m3", "e5m2"]
+                            ), "Only WA FP8 quant is supported"
                     else:
-                        assert w.symmetric, 'Only symmetric quant is supported.'
-                        assert w.bit in [4, 8], 'Supported quant: w4a16, w8a16, w8a8.'
+                        assert w.symmetric, "Only symmetric quant is supported."
+                        assert w.bit in [4, 8], "Supported quant: w4a16, w8a16, w8a8."
                         if a:
-                            assert a.symmetric, 'Only symmetric quant is supported.'
-                            assert a.bit == 8, 'Supported quant: w4a16, w8a16, w8a8.'
+                            assert a.symmetric, "Only symmetric quant is supported."
+                            assert a.bit in [4, 8], (
+                                "Supported quant: w4a4, w4a16, w8a16, w8a8."
+                            )
 
-                if config.save.get('save_vllm', False):
-                    deploy_all_modality(blockwise_opts, 'vllm_quant')
-                if config.save.get('save_lightllm', False):
-                    deploy_all_modality(blockwise_opts, 'lightllm_quant')
-                if config.save.get('save_sgl', False):
-                    deploy_all_modality(blockwise_opts, 'sgl_quant')
+                if config.save.get("save_vllm", False):
+                    deploy_all_modality(blockwise_opts, "vllm_quant")
+                if config.save.get("save_vllm_nvfp4", False):
+                    deploy_all_modality(blockwise_opts, "vllm_nvfp4_quant")
+                if config.save.get("save_lightllm", False):
+                    deploy_all_modality(blockwise_opts, "lightllm_quant")
+                if config.save.get("save_sgl", False):
+                    deploy_all_modality(blockwise_opts, "sgl_quant")
 
                 blockwise_opt.save_model(save_quant_path)
                 update_vllm_quant_config(blockwise_opt.model, config, save_quant_path)
 
-        if 'save' in config and config.save.get('save_autoawq', False):
+        if "save" in config and config.save.get("save_autoawq", False):
             for modality_config in modality_configs:
                 assert (
-                    modality_config.weight.bit in [4] and 'act' not in modality_config
-                ), 'AutoAWQ supports only 4-bit weight-only quantization.'
-                assert (
-                    not modality_config.weight.symmetric
-                ), 'Only asymmetric quant is supported.'
+                    modality_config.weight.bit in [4] and "act" not in modality_config
+                ), "AutoAWQ supports only 4-bit weight-only quantization."
+                assert not modality_config.weight.symmetric, (
+                    "Only asymmetric quant is supported."
+                )
 
-            deploy_all_modality(blockwise_opts, 'autoawq_quant')
+            deploy_all_modality(blockwise_opts, "autoawq_quant")
             blockwise_opt.save_model(save_quant_path)
             update_autoawq_quant_config(config, save_quant_path)
 
-        if 'save' in config and config.save.get('save_mlcllm', False):
+        if "save" in config and config.save.get("save_mlcllm", False):
             for modality_config in modality_configs:
                 assert (
-                    modality_config.weight.bit in [4] and 'act' not in modality_config
-                ), 'MlcLLM supports only 4-bit weight-only quantization.'
-                assert (
-                    not modality_config.weight.symmetric
-                ), 'Only asymmetric quant is supported.'
+                    modality_config.weight.bit in [4] and "act" not in modality_config
+                ), "MlcLLM supports only 4-bit weight-only quantization."
+                assert not modality_config.weight.symmetric, (
+                    "Only asymmetric quant is supported."
+                )
 
-            deploy_all_modality(blockwise_opts, 'mlcllm_quant')
+            deploy_all_modality(blockwise_opts, "mlcllm_quant")
             blockwise_opt.save_model(save_quant_path)
             update_autoawq_quant_config(config, save_quant_path)
 
-        if 'opencompass' in config:
-            assert config.save.get('save_trans', False)
-            cfg_path = config['opencompass']['cfg_path']
-            output_path = config['opencompass']['output_path']
+        if "opencompass" in config:
+            assert config.save.get("save_trans", False)
+            cfg_path = config["opencompass"]["cfg_path"]
+            output_path = config["opencompass"]["output_path"]
             eval_model_path = os.path.abspath(save_trans_path)
             opencompass_cmd = (
                 f"opencompass {cfg_path} -w {output_path} "
@@ -340,30 +350,30 @@ def main(config):
     dist.barrier()
 
 
-if __name__ == '__main__':
-    logger.add(sys.stdout, level='INFO')
+if __name__ == "__main__":
+    logger.add(sys.stdout, level="INFO")
     llmc_start_time = time.time()
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config', type=str, required=True)
-    parser.add_argument('--task_id', type=str, required=True)
-    parser.add_argument('--debugpy', action='store_true')
+    parser.add_argument("--config", type=str, required=True)
+    parser.add_argument("--task_id", type=str, required=True)
+    parser.add_argument("--debugpy", action="store_true")
     args = parser.parse_args()
     if args.debugpy:
-        print('waiting for debugpy connection...')
+        print("waiting for debugpy connection...")
         import debugpy
 
         debugpy.listen(12345)
         debugpy.wait_for_client()
         # debugpy.breakpoint()
 
-    with open(args.config, 'r') as file:
+    with open(args.config, "r") as file:
         config = yaml.safe_load(file)
     config = EasyDict(config)
 
-    init_process_group(backend='nccl')
-    torch.cuda.set_device(int(os.environ['LOCAL_RANK']))
+    init_process_group(backend="nccl")
+    torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
 
-    if int(os.environ['RANK']) != 0:
+    if int(os.environ["RANK"]) != 0:
         logger.remove()
 
     check_config(config)
@@ -375,50 +385,55 @@ if __name__ == '__main__':
 
     logger.info(f"WORLD_SIZE: {int(os.environ['WORLD_SIZE'])}")
 
-    seed_all(config.base.seed + int(os.environ['RANK']))
+    seed_all(config.base.seed + int(os.environ["RANK"]))
 
     # Ensure only the main process creates directories
-    if int(os.environ['RANK']) == 0:
-        if 'save' in config:
-            if config.save.get('save_trans', False):
+    if int(os.environ["RANK"]) == 0:
+        if "save" in config:
+            if config.save.get("save_trans", False):
                 save_trans_path = os.path.join(
-                    config.save.save_path, 'transformed_model'
+                    config.save.save_path, "transformed_model"
                 )
                 mkdirs(save_trans_path)
-            if config.save.get('save_trtllm', False):
+            if config.save.get("save_trtllm", False):
                 save_trtllm_trans_path = os.path.join(
-                    config.save.save_path, 'trtllm_transformed_model'
+                    config.save.save_path, "trtllm_transformed_model"
                 )
                 mkdirs(save_trtllm_trans_path)
                 save_trtllm_engine_path = os.path.join(
-                    config.save.save_path, 'trtllm_engine'
+                    config.save.save_path, "trtllm_engine"
                 )
                 mkdirs(save_trtllm_engine_path)
-            if config.save.get('save_vllm', False):
+            if config.save.get("save_vllm", False):
                 save_quant_path = os.path.join(
-                    config.save.save_path, 'vllm_quant_model'
+                    config.save.save_path, "vllm_quant_model"
                 )
                 mkdirs(save_quant_path)
-            if config.save.get('save_lightllm', False):
+            if config.save.get("save_vllm_nvfp4", False):
                 save_quant_path = os.path.join(
-                    config.save.save_path, 'lightllm_quant_model'
+                    config.save.save_path, "vllm_nvfp4_quant_model"
                 )
                 mkdirs(save_quant_path)
-            if config.save.get('save_sgl', False):
-                save_quant_path = os.path.join(config.save.save_path, 'sgl_quant_model')
-                mkdirs(save_quant_path)
-            if config.save.get('save_autoawq', False):
+            if config.save.get("save_lightllm", False):
                 save_quant_path = os.path.join(
-                    config.save.save_path, 'autoawq_quant_model'
+                    config.save.save_path, "lightllm_quant_model"
                 )
                 mkdirs(save_quant_path)
-            if config.save.get('save_mlcllm', False):
+            if config.save.get("save_sgl", False):
+                save_quant_path = os.path.join(config.save.save_path, "sgl_quant_model")
+                mkdirs(save_quant_path)
+            if config.save.get("save_autoawq", False):
                 save_quant_path = os.path.join(
-                    config.save.save_path, 'mlcllm_quant_model'
+                    config.save.save_path, "autoawq_quant_model"
                 )
                 mkdirs(save_quant_path)
-            if config.save.get('save_fake', False):
-                save_fake_path = os.path.join(config.save.save_path, 'fake_quant_model')
+            if config.save.get("save_mlcllm", False):
+                save_quant_path = os.path.join(
+                    config.save.save_path, "mlcllm_quant_model"
+                )
+                mkdirs(save_quant_path)
+            if config.save.get("save_fake", False):
+                save_fake_path = os.path.join(config.save.save_path, "fake_quant_model")
                 mkdirs(save_fake_path)
 
     # Synchronize all processes after directory creation
@@ -431,4 +446,4 @@ if __name__ == '__main__':
     llmc_end_time = time.time()
     llmc_duration_time = llmc_end_time - llmc_start_time
     logger.info(f"llmc_duration_time: {llmc_duration_time} s")
-    logger.info('--- llmc finished ---')
+    logger.info("--- llmc finished ---")

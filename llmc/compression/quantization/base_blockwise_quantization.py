@@ -4,7 +4,6 @@ import gc
 import json
 import os
 import re
-import time
 from collections import defaultdict
 from functools import partial
 
@@ -12,7 +11,6 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 from loguru import logger
-from tqdm import tqdm, trange
 
 from llmc.utils.registry_factory import KV_REGISTRY, TOKEN_REDUCTION_REGISTRY
 
@@ -20,6 +18,7 @@ from ..blockwise_optimization import BlockwiseOpt
 from .attn_utils import _LLMC_ATTN_MAP_
 from .auto_clip import AutoClipper, AutoClipperV3, AutoClipperV4
 from .utils import is_fp8_supported_gpu
+from .quant_nvfp4 import NVFP4Quantizer
 
 if is_fp8_supported_gpu():
     from .fp8_kernel import weight_cast_to_bf16, weight_cast_to_fp8
@@ -51,7 +50,7 @@ from .quant import (
     Weight48IntegerQuantizer,
     update_block_wise_scales,
 )
-from .utils import check_do_quant, check_w_only, get_aquantizer, get_wquantizer
+from .quant_nvfp4 import NVFP4Quantizer
 
 
 class BaseBlockwiseQuantization(BlockwiseOpt):
@@ -74,7 +73,14 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
         else:
             tmp_weight = module.weight
 
-        tmp_weight = wquantizer.fake_quant_weight_dynamic(tmp_weight, args)
+        if self.is_nvfp4:
+            args["global_scale"] = module.buf_global_scale
+            args["local_scales"] = module.buf_local_scales
+            args["qmax"] = module.buf_qmax
+            args["qmin"] = module.buf_qmin
+            tmp_weight = wquantizer.fake_quant_weight_static(tmp_weight, args)
+        else:
+            tmp_weight = wquantizer.fake_quant_weight_dynamic(tmp_weight, args)
 
         if module.weight.data.dtype == torch.float8_e4m3fn:
             tmp_weight = weight_cast_to_fp8(tmp_weight, module.weight_scale_inv.data)
@@ -115,6 +121,7 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
                 params_dict["wquantizer_default"] = self.wquantizer
                 params_dict["aquantizer_default"] = self.aquantizer
                 params_dict["w_only_default"] = w_only
+                params_dict["w_q"] = self.w_q
 
         elif mode in _REALQUANT_LINEAR_MAP_.keys():
             if self.mix_bits:
@@ -250,6 +257,8 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
                 self.weight_quant_module = IntegerQuantizer
         elif quant_type == "float-quant":
             self.weight_quant_module = FloatQuantizer
+        elif quant_type == "nvfp4":
+            self.weight_quant_module = NVFP4Quantizer
         logger.info(f"The used Weight Quant Module is {self.weight_quant_module}")
         self.wquantizer = self.weight_quant_module(**self.quant_config["weight"])
 
@@ -270,13 +279,15 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
                     self.act_quant_module = IntegerQuantizer
             elif quant_type == "float-quant":
                 self.act_quant_module = FloatQuantizer
+            elif quant_type == "nvfp4":
+                self.act_quant_module = NVFP4Quantizer
             self.quant_config["act"]["tp"] = self.tp
             self.aquantizer = self.act_quant_module(**self.quant_config["act"])
             self.act_static = self.quant_config["act"].get("static", False)
-            if self.act_static:
-                assert self.quant_config["act"]["granularity"] == "per_tensor", (
-                    "Only support per_tensor static quant"
-                )
+            # if self.act_static:
+            #     assert self.quant_config["act"]["granularity"] == "per_tensor", (
+            #         "Only support per_tensor static quant"
+            #     )
             self.quant_attn = self.quant_config["act"].get("quant_attn", False)
             if self.quant_attn:
                 assert self.config["model"]["type"] in ["Vit", "DeepseekV2"]
@@ -409,6 +420,20 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
         self.do_gqa_trans = special_config.get("do_gqa_trans", False)
         logger.info(f"self.do_gqa_trans : {self.do_gqa_trans}")
 
+        # NVFP4
+        self.is_nvfp4 = (
+            self.quant_config["weight"].get("quant_type", "int-quant") == "nvfp4"
+        )
+        if self.is_nvfp4:
+            assert self.true_sequential, "NVFP4 only supports true_sequential=True"
+            act_cfg = self.quant_config["act"]
+            assert act_cfg.get("quant_type", "int-quant") == "nvfp4"
+            assert act_cfg.get("bit", 8) == 4
+            assert act_cfg.get("symmetric", False)
+            assert act_cfg.get("granularity", "per_channel") == "per_group"
+            assert act_cfg.get("group_size", 322) == 16
+            assert act_cfg.get("static", False)
+
     def set_model_config(self):
         self.hidden_size = self.model.model_config.hidden_size
         self.num_heads = self.model.model_config.num_attention_heads
@@ -430,6 +455,7 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
     def replace_rotate_linears(self, block, exclude_keys=[]):
         for n, m in block.named_modules():
             if any(key in n for key in exclude_keys):
+                print(f"online_rotate exclude {n}")
                 continue
             if isinstance(m, nn.Linear) and (
                 "down_proj" in n or "o_proj" in n or "fc2" in n or "out_proj" in n
@@ -483,6 +509,21 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
     @torch.no_grad()
     def collect_block_qparams(self, block):
         named_linears = self.model.get_block_linears(block)
+        weight_cfg = self.config.quant.weight
+        use_share_global_scale = (
+            weight_cfg.get("quant_type", "int-quant") == "nvfp4"
+        ) and weight_cfg.get("share_global_scale", False)
+        if use_share_global_scale:
+            q_absmax = named_linears["self_attn.q_proj"].weight.abs().max()
+            k_absmax = named_linears["self_attn.k_proj"].weight.abs().max()
+            v_absmax = named_linears["self_attn.v_proj"].weight.abs().max()
+            qkv_absmax = max(q_absmax, k_absmax, v_absmax)
+            qkv_global_scale = NVFP4Quantizer.get_global_scale(qkv_absmax)
+
+            gate_absmax = named_linears["mlp.gate_proj"].weight.abs().max()
+            up_absmax = named_linears["mlp.up_proj"].weight.abs().max()
+            upgate_absmax = max(gate_absmax, up_absmax)
+            upgate_global_scale = NVFP4Quantizer.get_global_scale(upgate_absmax)
         for n, m in named_linears.items():
             args = {}
             if hasattr(m, "buf_lowbound_factor"):
@@ -497,18 +538,27 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
             else:
                 tmp_weight_data = m.weight.data
 
-            (
-                tensor,
-                scales,
-                zeros,
-                max_int,
-                min_int,
-            ) = self.wquantizer.get_tensor_qparams(tmp_weight_data, args=args)
+            if use_share_global_scale:
+                global_scale = None
+                pname = n.split(".")[-1]
+                if pname in ("q_proj", "k_proj", "v_proj"):
+                    global_scale = qkv_global_scale
+                elif pname in ("gate_proj", "up_proj"):
+                    global_scale = upgate_global_scale
+                args["global_scale"] = global_scale
 
-            m.register_buffer("buf_scales", scales.detach())
-            m.register_buffer("buf_zeros", zeros.detach())
-            m.register_buffer("buf_qmax", torch.tensor(max_int).to(self.dev))
-            m.register_buffer("buf_qmin", torch.tensor(min_int).to(self.dev))
+            qparams = self.wquantizer.get_tensor_qparams(tmp_weight_data, args=args)
+            if self.is_nvfp4:
+                tensor, global_scale, local_scales, qmax, qmin = qparams
+                m.register_buffer("buf_local_scales", local_scales.detach())
+                m.register_buffer("buf_global_scale", global_scale.detach())
+            else:
+                tensor, scales, zeros, qmax, qmin = qparams
+                m.register_buffer("buf_scales", scales.detach())
+                m.register_buffer("buf_zeros", zeros.detach())
+
+            m.register_buffer("buf_qmax", torch.tensor(qmax).to(self.dev))
+            m.register_buffer("buf_qmin", torch.tensor(qmin).to(self.dev))
 
     @torch.no_grad()
     def move_to_cpu(self, input_data):
@@ -546,7 +596,7 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
 
         # input_data = self.move_to_cpu(input_data)
 
-        for i in trange(len(input_data), desc="block_forward"):
+        for i in range(len(input_data)):
             # input_data[i] = input_data[i].to(device=next(block.parameters()).device)
             input_data[i] = input_data[i].to("cuda")
             for k in self.input["kwargs"][i]:

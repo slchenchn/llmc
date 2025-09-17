@@ -1,13 +1,4 @@
 set -x
-#!/bin/bash
-
-# if [ -d "/usr/local/cuda-12.2" ]; then
-#     export PATH=/usr/local/cuda-12.2/bin:$PATH
-#     export LD_LIBRARY_PATH=/usr/local/cuda-12.2/lib64:$LD_LIBRARY_PATH
-#     export CUDA_PATH=/usr/local/cuda-12.2
-# fi
-
-# export CUDA_VISIBLE_DEVICES=0,1
 
 llmc=$(dirname $0)/.. # llmc/scripts/csl_run_llmc.sh
 export PYTHONPATH=$llmc:$PYTHONPATH
@@ -21,7 +12,7 @@ MASTER_ADDR=127.0.0.1
 MASTER_PORT=$PORT
 task_id=$PORT
 
-SAVE_MODEL_PATH=/data/chenshuailin/checkpoints/llmc/debug
+SAVE_MODEL_PATH=checkpoints/debug
 rm -rf $SAVE_MODEL_PATH
 CFG=${1:-configs/csl/debug.yml}
 # CFG=${1:-configs/csl/smoothquant_gptq/sq_dsv2_sym_w8a8_static.yml}
@@ -39,11 +30,11 @@ torchrun \
     ${llmc}/llmc/__main__.py \
     --config $CFG \
     --task_id $task_id \
-    --debugpy \
     2>&1 | tee ${log_path}
 
 # cp ${llmc}/scripts/sgl/run_sgl.sh ${SAVE_MODEL_PATH}/run_sgl.sh
 
+    --debugpy \
 ##############################################################################
 # --rdzv_id $task_id \
 # --rdzv_backend c10d \

@@ -31,10 +31,11 @@ task_id=$PORT
 CFG=${1}
 task_name=$(basename $CFG .yml)
 timestamp=$(date +"%Y%m%d_%H%M%S")
-log_path=logs/${task_name}_${timestamp}.log
+LOG_DIR=${2:-logs}
+log_path=${LOG_DIR}/${task_name}_${timestamp}.log
 
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-mkdir -p logs
+mkdir -p ${LOG_DIR}
 torchrun \
 --nnodes $nnodes \
 --master_port $MASTER_PORT \

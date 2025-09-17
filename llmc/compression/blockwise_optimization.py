@@ -3,6 +3,7 @@ from abc import ABCMeta, abstractmethod
 
 import torch
 from loguru import logger
+from tqdm import trange
 
 
 class BlockwiseOpt(metaclass=ABCMeta):

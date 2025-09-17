@@ -7,7 +7,11 @@ from accelerate import Accelerator, DistributedType
 from accelerate.state import AcceleratorState
 from accelerate.utils import InitProcessGroupKwargs
 from lmms_eval.api.model import lmms
-from lmms_eval.models.internvl2 import InternVL2 as LMMS_InternVL2
+try:
+    from lmms_eval.models.internvl2 import InternVL2 as LMMS_InternVL2
+except Exception as e:
+    from lmms_eval.models.simple.internvl2 import InternVL2 as LMMS_InternVL2
+
 from loguru import logger
 from PIL import Image
 from torchvision.transforms.functional import InterpolationMode

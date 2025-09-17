@@ -1,0 +1,11 @@
+FROM 192.168.99.199:8080/bd/quant_llmc:v1.0.0
+
+WORKDIR /temp
+COPY . .
+
+
+RUN cd fast-hadamard-transform && python3 -m pip install -e . --no-build-isolation
+
+RUN chmod +x main_workflow.py
+
+ENTRYPOINT ["python3", "-u", "main_workflow.py"]

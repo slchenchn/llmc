@@ -158,7 +158,9 @@ def block_forward(block, input_data, input_kwargs):
         ):
             input_kwargs[i]["attention_mask"] = input_kwargs[i]["attention_mask"].cuda()
         with torch.no_grad():
-            out = block(input_data[i], **input_kwargs[i])[0]
+            out = block(input_data[i], **input_kwargs[i])
+            if out.ndim == 4:
+                out = out[0]
             output.append(out)
     return output
 

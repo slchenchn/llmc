@@ -36,9 +36,9 @@ def update_block_wise_scales(layer):
         use_qtorch=True,
     )
     _, llmc_scales, _, _, _ = quantizer.get_tensor_qparams(layer.weight.data)
-    assert (
-        llmc_scales.shape == layer.weight_scale_inv.shape
-    ), f"{llmc_scales.shape} != {layer.weight_scale_inv.shape}"
+    assert llmc_scales.shape == layer.weight_scale_inv.shape, (
+        f"{llmc_scales.shape} != {layer.weight_scale_inv.shape}"
+    )
     layer.weight_scale_inv.data = llmc_scales
 
 
@@ -46,20 +46,20 @@ def stochastic_round(x):
     """
     Stochastic rounding function that randomly rounds values up or down
     based on their fractional part.
-    
+
     Args:
         x: Input tensor to be rounded
-        
+
     Returns:
         Tensor with stochastically rounded values
     """
     # Get the floor and fractional part
     floor_x = torch.floor(x)
     frac_x = x - floor_x
-    
+
     # Generate random values in [0, 1) with same shape as x
     random_vals = torch.rand_like(x)
-    
+
     # Round up if random value is less than fractional part, otherwise round down
     return floor_x + (random_vals < frac_x).float()
 
@@ -183,10 +183,9 @@ class BaseQuantizer(object):
         return (min_val, max_val)
 
     def get_mse_range(self, tensor, norm=2.4, bs=256):
-
-        assert (
-            self.mse_b_num >= 1 and tensor.shape[0] % self.mse_b_num == 0
-        ), "Batch number must be divisible by tensor.shape[0],"
+        assert self.mse_b_num >= 1 and tensor.shape[0] % self.mse_b_num == 0, (
+            "Batch number must be divisible by tensor.shape[0],"
+        )
         bs = tensor.shape[0] // self.mse_b_num
         tensor = tensor.float()
         min_val, max_val = self.get_minmax_range(tensor)
@@ -421,9 +420,7 @@ class BaseQuantizer(object):
         if orig_min == orig_max:
             bin_value = torch.sum(update_hist)
             transformed_orig_hist = (
-                torch.histc(
-                    orig_min, bins=self.bins, min=update_min, max=update_max
-                )  # type: ignore[arg-type]
+                torch.histc(orig_min, bins=self.bins, min=update_min, max=update_max)  # type: ignore[arg-type]
                 * bin_value
             )
             return transformed_orig_hist + update_hist
@@ -446,7 +443,6 @@ class BaseQuantizer(object):
         return update_hist + transformed_orig_hist
 
     def get_hist_threshold(self, histogram, min_val, max_val):
-
         assert histogram.size()[0] == self.bins, "bins mismatch"
         bin_width = (max_val - min_val) / self.bins
 
@@ -600,7 +596,7 @@ class BaseQuantizer(object):
         else:
             scales = (max_val - min_val).clamp(min=1e-5) / (qmax - qmin)
             # zeros = (qmin - torch.round(min_val / scales)).clamp(qmin, qmax)
-            zeros = (qmin - torch.round(min_val / scales))
+            zeros = qmin - torch.round(min_val / scales)
             if not self.round_zp:
                 zeros = qmin - (min_val / scales)
         return scales, zeros, qmax, qmin
@@ -609,18 +605,16 @@ class BaseQuantizer(object):
         scales_list, zeros_list, qmin_list, qmax_list = [], [], [], []
 
         if self.calib_algo == "static_hist":
-            assert (
-                self.sym is True and self.granularity == "per_tensor"
-            ), "Only support per tensor static symmetric int quantize."
+            assert self.sym is True and self.granularity == "per_tensor", (
+                "Only support per tensor static symmetric int quantize."
+            )
             min_vals, max_vals = self.get_static_hist_range(act_tensors)
         elif self.calib_algo == "static_minmax":
             min_vals, max_vals = self.get_static_minmax_range(act_tensors)
         elif self.calib_algo == "static_moving_minmax":
             min_vals, max_vals = self.get_static_moving_minmax_range(act_tensors, alpha)
         else:
-            raise ValueError(
-                f"Unsupported calibration algorithm: {self.calib_algo}"
-            )
+            raise ValueError(f"Unsupported calibration algorithm: {self.calib_algo}")
 
         for i in range(len(min_vals)):
             min_val, max_val = min_vals[i], max_vals[i]
@@ -1071,9 +1065,9 @@ class FloatQuantizer(BaseQuantizer):
         self.dst_nbins = 2**self.num_bits
         self.use_qtorch = self.kwargs.get("use_qtorch")
         if self.use_qtorch:
-            assert (
-                float_quantize is not None
-            ), "Please install qtorch (pip install qtorch). Or set use_qtorch=False"
+            assert float_quantize is not None, (
+                "Please install qtorch (pip install qtorch). Or set use_qtorch=False"
+            )
             if "float_range" in self.kwargs:
                 self.qmin, self.qmax = self.kwargs["float_range"]
             else:
@@ -1083,6 +1077,7 @@ class FloatQuantizer(BaseQuantizer):
                     ("e3m2", 6): (-28, 28),
                     ("e4m7", 12): (-510, 510),
                     ("e2m1", 4): (-6, 6),
+                    ("nvfp4", 4): (-2.0, 2.0),  # NVFP4 range approximation
                 }
 
                 key = (self.bit, self.num_bits)
@@ -1211,7 +1206,6 @@ class FloatQuantizer(BaseQuantizer):
         return q_act
 
     def fake_quant_weight_static(self, weight, args):
-
         if "dim" in args and "ic" in args["dim"]:
             q_weight = weight.T
         else:
@@ -1242,7 +1236,6 @@ class FloatQuantizer(BaseQuantizer):
         return q_weight
 
     def fake_quant_weight_dynamic(self, weight, args={}):
-
         if "dim" in args and "ic" in args["dim"]:
             q_weight = weight.T
         else:

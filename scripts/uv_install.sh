@@ -23,12 +23,13 @@ uv pip install -U transformers datasets
 uv pip install opencv-fixer==0.2.5
 python -c "from opencv_fixer import AutoFix; AutoFix()"
 
-uv pip uninstall -y qtorch
+uv pip uninstall qtorch
 uv pip install -U qtorch
 
-cd ../fast-hadamard-transform
+cd fast-hadamard-transform
 uv pip install --no-build-isolation -e .
-uv pip install psutil accelerate easydict loguru Pillow torchvision human_eval lmms_eval librosa natsort
+uv pip install psutil accelerate easydict debugpy loguru Pillow torchvision human_eval librosa natsort compressed-tensors
+lmms_eval==0.3.4 
 
 # other fixes
 if [ -f "/usr/local/lib/python3.12/dist-packages/accelerate/utils/modeling.py" ]; then

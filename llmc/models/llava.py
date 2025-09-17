@@ -4,7 +4,10 @@ import torch
 from accelerate import Accelerator, DistributedType
 from accelerate.state import AcceleratorState
 from lmms_eval.api.model import lmms
-from lmms_eval.models.llava_hf import LlavaHf
+try:
+    from lmms_eval.models.llava_hf import LlavaHf
+except Exception as e:
+    from lmms_eval.models.chat.llava_hf import LlavaHf
 from loguru import logger
 from PIL import Image
 from transformers import (AutoConfig, AutoProcessor,

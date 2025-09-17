@@ -129,6 +129,7 @@ class RectifiedSigmoid(nn.Module):
     """
     stretch and clip the original sigmoid. When the input is too large or too small, the gradient will be zero.
     """
+
     def __init__(self, gamma, zeta):
         super(RectifiedSigmoid, self).__init__()
         self.gamma = gamma
@@ -632,7 +633,7 @@ class EffcientFakeQuantLinear(nn.Module):
 
     @classmethod
     @torch.no_grad()
-    def new(cls, module, w_qdq, a_qdq, debug_print={}):
+    def new(cls, module, w_qdq, a_qdq, debug_print={}, w_q=None):
         weight = w_qdq(module)
 
         if module.bias is not None:
@@ -786,6 +787,65 @@ class VllmRealQuantLinear(nn.Module):
             + f"zeros_shape={self.zeros_shape}, "
             + f"zeros_dtype={self.zeros_dtype})"
         )
+
+
+class VllmRealQuantLinearNVFP4(nn.Module):
+    def __init__(self, weight, bias, global_scale, local_scales, input_global_scale):
+        super().__init__()
+        weight_name = "weight_packed"
+        self.register_buffer(weight_name, weight)
+
+        if bias is not None:
+            self.register_buffer("bias", bias)
+        else:
+            self.bias = None
+
+        self.register_buffer("weight_global_scale", global_scale.clone())
+        self.register_buffer("weight_scale", local_scales)
+        if input_global_scale is not None:
+            self.register_buffer("input_global_scale", input_global_scale.clone())
+
+    @torch.no_grad()
+    def forward(self, x):
+        raise NotImplementedError
+
+    @classmethod
+    @torch.no_grad()
+    def new(cls, module, w_q, quant_config, debug_print=None, w_qdq=None, a_qdq=None):
+        weight, global_scale, local_scales = cls.quant_pack(module, w_q, quant_config)
+        if hasattr(module, "buf_act_scales_0"):
+            input_global_scale = module.buf_act_scales_0
+        else:
+            input_global_scale = None
+
+        if module.bias is not None:
+            bias = module.bias.data
+        else:
+            bias = None
+
+        new_module = cls(weight, bias, global_scale, local_scales, input_global_scale)
+        new_module.in_features = module.in_features
+        new_module.out_features = module.out_features
+        new_module.weight_shape = weight.shape
+
+        new_module.zeros_shape = None
+        new_module.zeros_dtype = None
+
+        return new_module
+
+    @classmethod
+    @torch.no_grad()
+    def quant_pack(cls, module, w_q, quant_config):
+        weight, global_scale, local_scales = w_q(module)
+        weight = cls.pack(weight)
+        return weight, global_scale, local_scales
+
+    @classmethod
+    @torch.no_grad()
+    def pack(self, weight):
+        from compressed_tensors import pack_fp4_to_uint8
+
+        return pack_fp4_to_uint8(weight)
 
 
 class LightllmRealQuantLinear(VllmRealQuantLinear):
@@ -1074,6 +1134,7 @@ _LLMC_LINEAR_TYPES_ = [
 
 _REALQUANT_LINEAR_MAP_ = {
     "vllm_quant": VllmRealQuantLinear,
+    "vllm_nvfp4_quant": VllmRealQuantLinearNVFP4,
     "lightllm_quant": LightllmRealQuantLinear,
     "sgl_quant": SglRealQuantLinear,
     "autoawq_quant": AutoawqRealQuantLinear,
