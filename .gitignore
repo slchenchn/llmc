@@ -34,3 +34,5 @@ cache/
 .vercel
 get_data.py
 *.pkl
+build/
+*.egg-info/
