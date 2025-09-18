@@ -719,15 +719,15 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
                     subset_kwargs = block_kwargs
             else:
                 subset_kwargs = {}
+            if self.act_static:
+                input_tensors = copy.deepcopy(input_feat[input_name])
+                self.register_act_qparams(layers_dict, input_tensors)
+                del input_tensors
             self.subset_transform(
                 subset,
                 input_feat,
                 subset_kwargs,
             )
-            if self.act_static:
-                input_tensors = copy.deepcopy(input_feat[input_name])
-                self.register_act_qparams(layers_dict, input_tensors)
-                del input_tensors
 
             if self.true_sequential and index != len(subsets) - 1:
                 next_subset = subsets[index + 1]

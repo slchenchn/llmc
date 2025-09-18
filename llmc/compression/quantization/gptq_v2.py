@@ -403,6 +403,10 @@ class GPTQv2(BaseBlockwiseQuantization):
             if len(inp.shape) == 3:
                 inp = inp.reshape((-1, inp.shape[-1]))
                 fp_inp = fp_inp.reshape((-1, fp_inp.shape[-1]))
+
+            # # activation quantization
+            # if "act" in self.quant_config:
+            #     inp = self.a_qdq(inp, layer, self.aquantizer)
             inp = inp.t()
             fp_inp = fp_inp.t()
 
@@ -455,10 +459,15 @@ class GPTQv2(BaseBlockwiseQuantization):
                 math.sqrt(2 / self.layers_cache[name]["nsamples"]) * fp_chunk.float()
             )
 
-            if self.block_idx == 0 and name in (
-                "self_attn.q_proj",
-                "self_attn.k_proj",
-                "self_attn.v_proj",
+            if (
+                "act" not in self.quant_config
+                and self.block_idx == 0
+                and name
+                in (
+                    "self_attn.q_proj",
+                    "self_attn.k_proj",
+                    "self_attn.v_proj",
+                )
             ):
                 # # DEBUG:
                 # print('debug')

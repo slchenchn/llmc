@@ -30,11 +30,11 @@ torchrun \
     ${llmc}/llmc/__main__.py \
     --config $CFG \
     --task_id $task_id \
+    --debugpy \
     2>&1 | tee ${log_path}
 
 # cp ${llmc}/scripts/sgl/run_sgl.sh ${SAVE_MODEL_PATH}/run_sgl.sh
 
-    --debugpy \
 ##############################################################################
 # --rdzv_id $task_id \
 # --rdzv_backend c10d \
