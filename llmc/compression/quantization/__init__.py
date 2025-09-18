@@ -4,6 +4,7 @@ from .base_blockwise_quantization import BaseBlockwiseQuantization
 from .dgq import DGQ
 from .gptq import GPTQ
 from .gptq_v2 import GPTQv2
+from .gptq_v3 import GPTQv3
 from .hqq import HQQ
 from .kvquant import KiviQuantKVCache, NaiveQuantKVCache
 from .llmint8 import LlmInt8

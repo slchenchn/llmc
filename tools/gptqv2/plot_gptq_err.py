@@ -1,10 +1,10 @@
-from pathlib import Path
 import json_repair
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
 from matplotlib.colors import LogNorm
+from pathlib import Path
 
 
 def remove_from_list_no_err(lst, rms):
@@ -188,16 +188,19 @@ def create_heatmap(plot_data, legends_dir: Path):
 if __name__ == "__main__":
     save_fig_dir = Path("figs/gptq_errs/qwen2.5-3B-it")
     log_paths = [
-        "logs/step2_gptq_qwen2.5-3B-it_sym_w4a8_20250906_143211.log",
-        "logs/step2_gptq_qwen2.5-3B-it_sym_w4a8_force_dtype_20250906_174959.log",
-        # "logs/step2_gptq_qwen2.5-3B-it_sym_w4a8_fp32_20250906_163150.log",
-        "logs/step2_gptq_qwen2.5-3B-it_sym_w4a8_force_dtype_ultrachat_20250906_192030.log",
+        "logs/gptqv2_qwen2.5-3B-it_nvfp4_w4a4_20250917_173006.log",
+        # "logs/gptqv2_qwen2.5-3B-it_nvfp4_w4a4.no-act-order_20250918_160213.log"
+
+        "logs/gptqv3_qwen2.5-3B-it_nvfp4_w4a4_20250918_160651.log",
+        "logs/gptqv3_qwen2.5-3B-it_nvfp4_w4a4_20250918_162402.log",
     ]
     datas = {}
     for log_path in log_paths:
         if Path(log_path).exists():
             legend = "_".join(Path(log_path).stem.split("_")[:-2])
             data = read_gptq_log(log_path)
+            if legend in datas:
+                legend += ".new"
             datas[legend] = data
         else:
             print(f"Warning: {log_path} does not exist, skipping...")

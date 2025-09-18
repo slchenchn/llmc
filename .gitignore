@@ -35,3 +35,5 @@ get_data.py
 *.pkl
 build/
 *.egg-info/
+debug.yml
+debug_csl.sh

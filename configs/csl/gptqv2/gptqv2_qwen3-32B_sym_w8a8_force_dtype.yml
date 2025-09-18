@@ -1,0 +1,48 @@
+base:
+    seed: &seed 0
+model:
+    type: Qwen2
+    path: /nfs/FM/chenshuailin/checkpoints/Qwen/Qwen3-32B/
+    torch_dtype: auto
+calib:
+    name: wikitext2
+    path: data/wikitext2
+    preproc: wikitext2_gptq
+    download: False
+    n_samples: 128
+    bs: 1
+    seq_len: 2048
+    seed: *seed
+quant:
+    method: GPTQv2
+    weight:
+        bit: 8
+        symmetric: True
+        granularity: per_channel
+        calib_algo: mse
+    act:
+        bit: 8
+        symmetric: True
+        granularity: per_token
+        calib_algo: minmax
+    special:
+        actorder: True
+        static_groups: True
+        percdamp: 0.05
+        blocksize: 128
+        chunk_num: 1
+        true_sequential: True
+        online_rotate: False
+        # fp32_had: True
+        eager_transform_dtype: True
+        force_scale_dtype: True
+    quant_out: True
+save:
+    # save_trans: True
+    # save_fake: True
+    save_vllm: True
+    save_path: checkpoints/Qwen3-32B/gptqv2/sym_w8a8_force_dtype
+dispatch:
+    num_gpus: 4
+    safe_margin: 0.8
+    first_gpu_extra_margin: 0.5
