@@ -42,13 +42,14 @@ quant:
         online_rotate: False
         fp32_had: True
         # online_rotate_exclude: ["o_proj"]
-        eager_transform_dtype: True
+        eager_transform_dtype: False
+        force_scale_dtype: False
     quant_out: True
 save:
     # save_fake: True
     # save_vllm: True
     # save_autoawq: True
     save_vllm_nvfp4: True
-    save_path: checkpoints/Qwen2.5-3B-Instruct/gptqv3/nvfp4_w4a4_sgs.new
+    save_path: checkpoints/Qwen2.5-3B-Instruct/gptqv3/nvfp4_w4a4_sgs
 dispatch:
     num_gpus: 1

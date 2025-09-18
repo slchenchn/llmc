@@ -449,10 +449,9 @@ class GPTQv3(BaseBlockwiseQuantization):
                 "self_attn.v_proj",
             ):
                 assert torch.allclose(inp, fp_inp)
-                
+
             if "act" in self.quant_config:
                 inp = self.a_qdq(inp, layer, self.aquantizer)
-
 
             if isinstance(layer, RotateLinear):
                 fp_inp = layer.rotater.rotate(fp_inp)
@@ -592,7 +591,11 @@ class GPTQv3(BaseBlockwiseQuantization):
                 self.group_zeros = self.split_qparams(zeros)
             for i in range(len(self.group_scales)):
                 qparams = {}
-                qparams["scale"] = self.group_scales[i]
+                qparams["scale"] = (
+                    self.group_scales[i].to(self.model_dtype)
+                    if self.force_scale_dtype
+                    else self.group_scales[i]
+                )
                 if not self.wquantizer.sym:
                     qparams["zero"] = self.group_zeros[i]
                 else:
@@ -672,11 +675,14 @@ class GPTQv3(BaseBlockwiseQuantization):
         if quant_format not in ["fake_quant", "origin_float"]:
             assert not self.need_perm
         super().deploy(quant_format)
-        self.model.convert_dtype(self.model_dtype)
+
+        if not self.is_nvfp4:
+            self.model.convert_dtype(self.model_dtype)
 
     @torch.no_grad()
     def save_model(self, path):
-        self.model.convert_dtype(self.model_dtype)
+        if not self.is_nvfp4:
+            self.model.convert_dtype(self.model_dtype)
         super().save_model(path)
 
     @torch.no_grad()

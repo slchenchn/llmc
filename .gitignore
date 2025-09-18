@@ -37,3 +37,4 @@ build/
 *.egg-info/
 debug.yml
 debug_csl.sh
+debug.py

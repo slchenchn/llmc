@@ -680,11 +680,14 @@ class GPTQv2(BaseBlockwiseQuantization):
         if quant_format not in ["fake_quant", "origin_float"]:
             assert not self.need_perm
         super().deploy(quant_format)
-        self.model.convert_dtype(self.model_dtype)
+
+        if not self.is_nvfp4:
+            self.model.convert_dtype(self.model_dtype)
 
     @torch.no_grad()
     def save_model(self, path):
-        self.model.convert_dtype(self.model_dtype)
+        if not self.is_nvfp4:
+            self.model.convert_dtype(self.model_dtype)
         super().save_model(path)
 
     @torch.no_grad()
