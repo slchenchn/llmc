@@ -2,7 +2,7 @@ base:
     seed: &seed 0
 model:
     type: Qwen2
-    path: /ms/FM/chenshuailin/projects/quant/OSTQuant/output/qwen3-kltop-w4a8-no_qk_smooth-seq2k-bs16/before_gptq
+    path: /nfs/FM/chenshuailin/workflow/workflow_export/output/Qwen3-32B-bs16-no_rov_s400/ostquant_output/before_gptq
     torch_dtype: torch.float16
 calib:
     name: wikitext2
@@ -42,6 +42,8 @@ save:
     save_trans: False
     save_fake: False
     save_vllm: True
-    save_path: /ms/FM/chenshuailin/projects/quant/OSTQuant/output/qwen3-kltop-w4a8-no_qk_smooth-seq2k-bs16/llmc_gptqv2_force_dtype_fp16
+    save_path: /nfs/FM/chenshuailin/workflow/workflow_export/output/Qwen3-32B-bs16-no_rov_s400/llmc_gptqv2_force_dtype_fp16
 dispatch:
-    num_gpus: 1
+    num_gpus: 4
+    safe_margin: 0.8
+    first_gpu_extra_margin: 0.5

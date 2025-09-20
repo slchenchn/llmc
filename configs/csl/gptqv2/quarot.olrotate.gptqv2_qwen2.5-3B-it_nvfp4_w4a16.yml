@@ -17,9 +17,9 @@ calib:
 quant:
     method: GPTQv2
     weight:
+        quant_type: nvfp4
         bit: 4
         symmetric: True
-        quant_type: nvfp4
         granularity: per_group
         group_size: 16
         share_global_scale: True

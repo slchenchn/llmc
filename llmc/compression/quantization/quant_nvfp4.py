@@ -94,7 +94,6 @@ class NVFP4Quantizer(BaseQuantizer):
     ):
         min_val, max_val = tensor_range[0], tensor_range[1]
         absmax = torch.max(max_val.abs(), min_val.abs())
-        # absmax = torch.max(max_val.abs(), min_val.abs()).float()
 
         global_absmax = absmax.max()
         cur_global_scale = self.get_global_scale(global_absmax)
@@ -205,6 +204,8 @@ class NVFP4Quantizer(BaseQuantizer):
             args["qmax"],
             args["qmin"],
         )
+        assert global_scale is not None
+        assert local_scales is not None
 
         qweight = self.reshape_tensor(qweight)
         qweight = self.quant_dequant(qweight, global_scale, local_scales, qmax, qmin)
@@ -217,23 +218,20 @@ class NVFP4Quantizer(BaseQuantizer):
 
     def fake_quant_weight_dynamic(self, weight, args={}):
         """Fake quantization for dynamic weights"""
-        raise NotImplementedError
-        if "dim" in args and "ic" in args["dim"]:
-            q_weight = weight.T
-        else:
-            q_weight = weight
 
-        org_w_shape = q_weight.shape
-        org_w_dtype = q_weight.dtype
+        org_w_shape = weight.shape
+        org_w_dtype = weight.dtype
 
-        q_weight, scales, zeros, qmax, qmin = self.get_tensor_qparams(q_weight, args)
-        q_weight = self.quant_dequant(q_weight, scales, zeros, qmax, qmin)
-        q_weight = self.restore_tensor(q_weight, org_w_shape).to(org_w_dtype)
+        if "output_scale_factor" in args:
+            raise NotImplementedError
 
-        if "dim" in args and "ic" in args["dim"]:
-            q_weight = q_weight.T
+        weight, global_scale, local_scales, qmax, qmin = self.get_tensor_qparams(
+            weight, args
+        )
+        weight = self.quant_dequant(weight, global_scale, local_scales, qmax, qmin)
+        weight = self.restore_tensor(weight, org_w_shape).to(org_w_dtype)
 
-        return q_weight
+        return weight
 
     def real_quant_weight_static(self, weight, args):
         org_w_shape = weight.shape
@@ -249,6 +247,10 @@ class NVFP4Quantizer(BaseQuantizer):
             args["qmax"],
             args["qmin"],
         )
+
+        assert global_scale is not None
+        assert local_scales is not None
+
         weight = self.reshape_tensor(weight)
         weight = self.quant(weight, global_scale, local_scales, qmax, qmin)
         weight = self.restore_tensor(weight, org_w_shape)
@@ -307,6 +309,7 @@ class NVFP4Quantizer(BaseQuantizer):
             args["qmax"],
             args["qmin"],
         )
+        assert global_scale is not None
         assert torch.all(zeros == 0), f"NVFP4Quantizer's zeros must be 0, got {zeros}"
         assert torch.all(qmax == 6.0), f"NVFP4Quantizer's qmax must be 6.0, got {qmax}"
         assert torch.all(qmin == -6.0), (
@@ -321,4 +324,11 @@ class NVFP4Quantizer(BaseQuantizer):
         return act
 
     def fake_quant_act_dynamic(self, act, args={}):
-        raise NotImplementedError
+        org_act_shape = act.shape
+        org_act_dtype = act.dtype
+
+        act, global_scale, local_scales, qmax, qmin = self.get_tensor_qparams(act, args)
+        act = self.quant_dequant(act, global_scale, local_scales, qmax, qmin)
+
+        act = self.restore_tensor(act, org_act_shape).to(org_act_dtype)
+        return act
