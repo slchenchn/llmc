@@ -33,9 +33,11 @@ def check_dtype(state_dict):
     print("start checking dtype...")
     for name, weight in state_dict.items():
         if "embed" in name or "head" in name or "norm" in name:
+            print(f"{name}: {weight.dtype}")
             continue
 
         if ".bias" in name:
+            print(f"{name}: {weight.dtype}")
             continue
 
         if "weight_packed" in name:  # packed nvfp4
@@ -57,8 +59,7 @@ def check_dtype(state_dict):
 
 if __name__ == "__main__":
     model_dir = Path(
-        # "checkpoints/Qwen2.5-3B-Instruct/gptqv3/nvfp4_w4a4_sgs.new/vllm_nvfp4_quant_model"
-        "checkpoints/debug/vllm_nvfp4_quant_model"
+        "checkpoints/Qwen2.5-3B-Instruct/gptqv3/nvfp4_w4a4_sgs/vllm_nvfp4_quant_model"
     )
 
     state_dict = {}
@@ -70,4 +71,4 @@ if __name__ == "__main__":
     check_dtype(state_dict)
     # for layer in trange(cfg.num_hidden_layers):
 
-    print("check done")
+    print("\nAll check done")
