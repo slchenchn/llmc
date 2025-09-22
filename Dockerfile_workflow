@@ -1,4 +1,4 @@
-FROM 192.168.14.129:80/fm/quant_llmc:v1.0.0
+FROM 192.168.14.129:80/fm/llmc:v1.1
 
 WORKDIR /temp
 COPY . .
