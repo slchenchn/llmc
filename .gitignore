@@ -40,3 +40,4 @@ debug_csl.sh
 debug.py
 aihub/
 tools/
+wandb/

@@ -10,6 +10,7 @@ import torch.distributed as dist
 import torch.nn as nn
 import transformers
 from loguru import logger
+import wandb
 
 from llmc.utils.registry_factory import ALGO_REGISTRY
 
@@ -181,8 +182,11 @@ class GPTQ(BaseBlockwiseQuantization):
         try:
             cond_num = torch.linalg.cond(H).item()
             logger.info(f'[GPTQ][{name}] H cond num={cond_num:.4e}')
+            cond_val = cond_num
         except Exception:
             logger.info(f'[GPTQ][{name}] H cond num=inf')
+            cond_val = float("inf")
+        wandb.log({f"{name}/H_cond_num": cond_val}, step=self.block_idx)
 
         H = torch.linalg.cholesky(H)
         H = torch.cholesky_inverse(H)
@@ -196,7 +200,14 @@ class GPTQ(BaseBlockwiseQuantization):
 
         self.weight_transform(W, H, Losses, tmp)
         torch.cuda.synchronize()
-        logger.info(f"error {torch.sum(Losses).item()}")
+        total_error = torch.sum(Losses).item()
+        logger.info(f"error {total_error}")
+        wandb.log(
+            {
+                f"{name}/gptq error": total_error,
+            },
+            step=self.block_idx,
+        )
 
         if self.actorder or self.owq:
             tmp[:, self.n_nonout :] = W[:, self.n_nonout :]

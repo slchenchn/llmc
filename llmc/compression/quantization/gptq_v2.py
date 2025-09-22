@@ -13,6 +13,7 @@ import functools
 from llmc.utils.utils import get_decoder_layer_ori_device
 from tqdm import trange
 
+import wandb
 from llmc.utils.registry_factory import ALGO_REGISTRY
 
 from .base_blockwise_quantization import BaseBlockwiseQuantization
@@ -216,6 +217,14 @@ class GPTQv2(BaseBlockwiseQuantization):
         logger.info(
             f"[GPTQv2][{name}] pre-P: ||H||_F={H_fro:.4e}, ||dXXT||_F={dXXT_fro:.4e}, ratio={ratio:.2%}"
         )
+        wandb.log(
+            {
+                f"{name}/preP_H_fro": H_fro,
+                f"{name}/preP_dXXT_fro": dXXT_fro,
+                f"{name}/preP_H_dXXT_ratio": ratio,
+            },
+            step=self.block_idx,
+        )
 
         damp = self.percdamp * torch.mean(torch.diag(H))
         diag = torch.arange(self.columns, device=self.dev)
@@ -224,8 +233,11 @@ class GPTQv2(BaseBlockwiseQuantization):
         try:
             cond_num = torch.linalg.cond(H).item()
             logger.info(f'[GPTQv2][{name}] H cond num={cond_num:.4e}')
+            cond_val = cond_num
         except Exception:
             logger.info(f'[GPTQv2][{name}] H cond num=inf')
+            cond_val = float("inf")
+        wandb.log({f"{name}/H_cond_num": cond_val}, step=self.block_idx)
 
         H = torch.linalg.cholesky(H)
         H = torch.cholesky_inverse(H)
@@ -240,6 +252,7 @@ class GPTQv2(BaseBlockwiseQuantization):
         except Exception:
             P_fro = torch.norm(P, p="fro").item()
         logger.info(f"[GPTQv2][{name}] post-P: ||P||_F={P_fro:.4e}")
+        wandb.log({f"{name}/postP_P_fro": P_fro}, step=self.block_idx)
 
         return W, Hinv
 
@@ -249,7 +262,14 @@ class GPTQv2(BaseBlockwiseQuantization):
 
         self.weight_transform(W, Hinv, Losses, tmp)
         torch.cuda.synchronize()
-        logger.info(f"error {torch.sum(Losses).item()}")
+        total_error = torch.sum(Losses).item()
+        logger.info(f"error {total_error}")
+        wandb.log(
+            {
+                f"{name}/gptq error": total_error,
+            },
+            step=self.block_idx,
+        )
 
         if self.actorder or self.owq:
             tmp[:, self.n_nonout :] = W[:, self.n_nonout :]

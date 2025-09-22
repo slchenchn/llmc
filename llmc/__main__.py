@@ -2,6 +2,7 @@ import argparse
 import gc
 import json
 import os
+from pathlib import Path
 import sys
 import time
 from collections import defaultdict
@@ -350,6 +351,20 @@ def main(config):
     dist.barrier()
 
 
+def setup_wandb(args, config):
+    import wandb
+
+    wandb.login()
+    cfg_path = Path(args.config)
+
+    wandb.init(
+        project="llmc",
+        group=cfg_path.parent.name,
+        name=cfg_path.stem,
+        config=config,
+    )
+
+
 if __name__ == "__main__":
     logger.add(sys.stdout, level="INFO")
     llmc_start_time = time.time()
@@ -377,6 +392,7 @@ if __name__ == "__main__":
         logger.remove()
 
     check_config(config)
+    setup_wandb(args, config)
 
     logger.info(f"args: {args}")
     logger.info(f"config: \n{json.dumps(config, ensure_ascii=False, indent=4)}")

@@ -1,0 +1,46 @@
+base:
+    seed: &seed 0
+model:
+    type: Qwen2
+    path: checkpoints/Qwen2.5-3B-Instruct/quarot/nvfp4_w4a16_sgs_olrotate/transformed_model
+    torch_dtype: auto
+calib:
+    name: wikitext2
+    path: data/wikitext2
+    preproc: wikitext2_gptq
+    download: False
+    n_samples: 128
+    bs: 1
+    seq_len: 2048
+    seed: *seed
+quant:
+    method: GPTQ
+    weight:
+        bit: 4
+        symmetric: True
+        granularity: per_channel
+        calib_algo: mse
+    act:
+        bit: 8
+        symmetric: True
+        granularity: per_token
+        calib_algo: minmax
+    special:
+        actorder: True
+        static_groups: True
+        percdamp: 0.05
+        blocksize: 128
+        chunk_num: 1
+        true_sequential: True
+        online_rotate: True
+        fp32_had: True
+        eager_transform_dtype: True
+        force_scale_dtype: True
+    quant_out: True
+save:
+    # save_trans: True
+    # save_fake: True
+    save_vllm: True
+    save_path: checkpoints/Qwen2.5-3B-Instruct/gptq/quarot_olrotate_gptq_sym_w4a8_force_dtype
+dispatch:
+    num_gpus: 1

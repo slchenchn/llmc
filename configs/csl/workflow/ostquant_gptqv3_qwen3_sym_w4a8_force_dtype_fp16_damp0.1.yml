@@ -1,0 +1,48 @@
+base:
+    seed: &seed 0
+model:
+    type: Qwen2
+    path: /nfs/FM/chenshuailin/workflow/workflow_export/output/Qwen3-32B-bs8-no_rov_s200/ostquant_output/before_gptq
+    torch_dtype: torch.float16
+calib:
+    name: wikitext2
+    path: data/wikitext2
+    preproc: wikitext2_gptq
+    download: False
+    n_samples: 128
+    bs: 1
+    seq_len: 2048
+    seed: *seed
+quant:
+    method: GPTQv3
+    weight:
+        bit: 4
+        symmetric: True
+        granularity: per_channel
+        calib_algo: mse
+    act:
+        bit: 8
+        symmetric: True
+        granularity: per_token
+        calib_algo: minmax
+    special:
+        actorder: True
+        static_groups: True
+        percdamp: 0.1
+        blocksize: 128
+        chunk_num: 1
+        true_sequential: True
+        online_rotate: True
+        fp32_had: True
+        online_rotate_exclude: ["o_proj"]
+        eager_transform_dtype: True
+        force_scale_dtype: True
+    quant_out: True
+save:
+    save_trans: False
+    save_fake: False
+    save_vllm: True
+    save_path: /nfs/FM/chenshuailin/workflow/workflow_export/output/Qwen3-32B-bs8-no_rov_s200/llmc_gptqv3_force_dtype_fp16_damp0.1
+dispatch:
+    num_gpus: 1
+    first_gpu_extra_margin: 0.4
