@@ -213,12 +213,19 @@ class GPTQv3(BaseBlockwiseQuantization):
             dXXT_fro = torch.norm(dXXT, p="fro").item()
         ratio = dXXT_fro / (H_fro + 1e-12)
         logger.info(
-            f"[GPTQv2][{name}] pre-P: ||H||_F={H_fro:.4e}, ||dXXT||_F={dXXT_fro:.4e}, ratio={ratio:.2%}"
+            f"[GPTQv3][{name}] pre-P: ||H||_F={H_fro:.4e}, ||dXXT||_F={dXXT_fro:.4e}, ratio={ratio:.2%}"
         )
 
         damp = self.percdamp * torch.mean(torch.diag(H))
         diag = torch.arange(self.columns, device=self.dev)
         H[diag, diag] += damp
+        # H condition number
+        try:
+            cond_num = torch.linalg.cond(H).item()
+            logger.info(f'[GPTQv3][{name}] H cond num={cond_num:.4e}')
+        except Exception:
+            logger.info(f'[GPTQv3][{name}] H cond num=inf')
+            
         H = torch.linalg.cholesky(H)
         H = torch.cholesky_inverse(H)
         H = torch.linalg.cholesky(H, upper=True)
@@ -231,7 +238,7 @@ class GPTQv3(BaseBlockwiseQuantization):
             P_fro = torch.linalg.norm(P, ord="fro").item()
         except Exception:
             P_fro = torch.norm(P, p="fro").item()
-        logger.info(f"[GPTQv2][{name}] post-P: ||P||_F={P_fro:.4e}")
+        logger.info(f"[GPTQv3][{name}] post-P: ||P||_F={P_fro:.4e}")
 
         return W, Hinv
 
@@ -450,12 +457,12 @@ class GPTQv3(BaseBlockwiseQuantization):
             ):
                 assert torch.allclose(inp, fp_inp)
 
-            if "act" in self.quant_config:
-                inp = self.a_qdq(inp, layer, self.aquantizer)
-
             if isinstance(layer, RotateLinear):
                 fp_inp = layer.rotater.rotate(fp_inp)
                 inp = layer.rotater.rotate(inp)
+                
+            if "act" in self.quant_config:
+                inp = self.a_qdq(inp, layer, self.aquantizer)
 
             if isinstance(
                 layer, (FakeQuantLinear, nn.Linear, transformers.Conv1D, RotateLinear)

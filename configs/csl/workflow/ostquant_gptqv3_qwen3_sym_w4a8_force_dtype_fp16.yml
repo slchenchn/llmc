@@ -14,7 +14,7 @@ calib:
     seq_len: 2048
     seed: *seed
 quant:
-    method: GPTQv2
+    method: GPTQv3
     weight:
         bit: 4
         symmetric: True
@@ -42,7 +42,7 @@ save:
     save_trans: False
     save_fake: False
     save_vllm: True
-    save_path: /nfs/FM/chenshuailin/workflow/workflow_export/output/Qwen3-32B-bs8-no_rov_s200/llmc_gptqv2_force_dtype_fp16
+    save_path: /nfs/FM/chenshuailin/workflow/workflow_export/output/Qwen3-32B-bs8-no_rov_s200/llmc_gptqv3_force_dtype_fp16
 dispatch:
     num_gpus: 1
     first_gpu_extra_margin: 0.4

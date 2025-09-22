@@ -52,4 +52,4 @@ save:
     save_path: checkpoints/llama3.1-8B-it/RTN/nvfp4_w4a4_sgs
 dispatch:
     num_gpus: 2
-    first_gpu_extra_margin: 0.5
+    first_gpu_extra_margin: 0.2

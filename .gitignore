@@ -38,3 +38,5 @@ build/
 debug.yml
 debug_csl.sh
 debug.py
+aihub/
+tools/

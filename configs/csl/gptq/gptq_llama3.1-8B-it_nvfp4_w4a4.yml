@@ -14,7 +14,7 @@ calib:
     seq_len: 2048
     seed: *seed
 quant:
-    method: GPTQv3
+    method: GPTQ
     weight:
         quant_type: nvfp4
         bit: 4
@@ -50,7 +50,7 @@ save:
     # save_vllm: True
     # save_autoawq: True
     save_vllm_nvfp4: True
-    save_path: checkpoints/llama3.1-8B-it/gptqv3/nvfp4_w4a4_sgs
+    save_path: checkpoints/llama3.1-8B-it/gptq/nvfp4_w4a4_sgs
 dispatch:
     num_gpus: 1
     first_gpu_extra_margin: 0.1

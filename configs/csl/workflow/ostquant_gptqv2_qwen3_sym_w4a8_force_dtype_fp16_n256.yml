@@ -9,7 +9,7 @@ calib:
     path: data/wikitext2
     preproc: wikitext2_gptq
     download: False
-    n_samples: 128
+    n_samples: 256
     bs: 1
     seq_len: 2048
     seed: *seed
@@ -30,7 +30,7 @@ quant:
         static_groups: True
         percdamp: 0.05
         blocksize: 128
-        chunk_num: 1
+        chunk_num: 8
         true_sequential: True
         online_rotate: True
         fp32_had: True
@@ -42,7 +42,7 @@ save:
     save_trans: False
     save_fake: False
     save_vllm: True
-    save_path: /nfs/FM/chenshuailin/workflow/workflow_export/output/Qwen3-32B-bs8-no_rov_s200/llmc_gptqv2_force_dtype_fp16
+    save_path: /nfs/FM/chenshuailin/workflow/workflow_export/output/Qwen3-32B-bs8-no_rov_s200/llmc_gptqv2_force_dtype_fp16_n256
 dispatch:
     num_gpus: 1
-    first_gpu_extra_margin: 0.4
+    first_gpu_extra_margin: 0.1
