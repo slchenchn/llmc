@@ -74,6 +74,7 @@ class GPTQv3(BaseBlockwiseQuantization):
         # self.keep_sample_ratio = special_config.get("keep_sample_ratio", 1.0)
         # self.keep_sample_part = special_config.get("keep_sample_part", "bottom")
         self.online_rotate_exclude = special_config.get("online_rotate_exclude", [])
+        self.fp64_layers = special_config.get("fp64_layers", [])
         self.eager_transform_dtype = special_config.get("eager_transform_dtype", False)
         self.force_scale_dtype = special_config.get("force_scale_dtype", False)
         logger.info(f"eager_transform_dtype: {self.eager_transform_dtype}")
@@ -150,6 +151,14 @@ class GPTQv3(BaseBlockwiseQuantization):
         W, Hinv = self.process_hessian_and_weights(layer, name)
         self.update_layer_with_transformed_weights(layer, W, Hinv, name)
 
+    def get_layer_dtype(self, layer_name: str) -> torch.dtype:
+        # Match semantics similar to online_rotate_exclude: substring match
+        for pattern in self.fp64_layers:
+            if pattern in layer_name:
+                # logger.info(f"{layer_name} is fp64 layer")
+                return torch.float64
+        return torch.float32
+
     def initialize_qparams_and_prepare_weights(self, layer, name):
         self.qparams = {}
         self.columns = self.layers_cache[name]["columns"]
@@ -166,7 +175,8 @@ class GPTQv3(BaseBlockwiseQuantization):
         elif isinstance(layer, transformers.Conv1D):
             W = W.t()
 
-        W = W.float()
+        target_dtype = self.get_layer_dtype(name)
+        W = W.to(dtype=target_dtype)
         H = self.layers_cache[name].pop("H")
         dXXT = self.layers_cache[name].pop("dXXT")
 
@@ -260,6 +270,7 @@ class GPTQv3(BaseBlockwiseQuantization):
         return W, Hinv
 
     def update_layer_with_transformed_weights(self, layer, W, Hinv, name):
+        orig_dtype = layer.weight.dtype
         Losses = torch.zeros_like(W)
         tmp = torch.zeros_like(W)
 
@@ -282,7 +293,7 @@ class GPTQv3(BaseBlockwiseQuantization):
         if isinstance(layer, transformers.Conv1D):
             tmp = tmp.t()
 
-        layer.weight.data = tmp.reshape(layer.weight.shape)
+        layer.weight.data = tmp.reshape(layer.weight.shape).to(orig_dtype)
 
         if self.wquantizer.granularity == "per_group" and not self.static_groups:
             self.update_model_qparams(layer)
@@ -495,8 +506,9 @@ class GPTQv3(BaseBlockwiseQuantization):
                 inp = inp.t()  # [D, N_b]
                 fp_inp = fp_inp.t()
 
-            inp_float = inp.float()
-            fp_inp_float = fp_inp.float()
+            target_dtype = self.get_layer_dtype(name)
+            inp_float = inp.to(dtype=target_dtype)
+            fp_inp_float = fp_inp.to(dtype=target_dtype)
 
             H += inp_float @ inp_float.t()
             dX = fp_inp_float - inp_float
@@ -515,14 +527,16 @@ class GPTQv3(BaseBlockwiseQuantization):
             W = W.flatten(1)
         if isinstance(layer, transformers.Conv1D):
             W = W.t()
+        dtype = self.get_layer_dtype(name)
+        logger.info(f"{name} is {dtype} layer")
         self.layers_cache[name]["H"] = torch.zeros(
-            (W.shape[1], W.shape[1]), device=self.dev
+            (W.shape[1], W.shape[1]), device=self.dev, dtype=dtype
         )
         self.layers_cache[name]["nsamples"] = 0
         self.layers_cache[name]["columns"] = W.shape[1]
         # Optional cross-covariance accumulator
         self.layers_cache[name]["dXXT"] = torch.zeros(
-            (W.shape[1], W.shape[1]), device=self.dev
+            (W.shape[1], W.shape[1]), device=self.dev, dtype=dtype
         )
         # Initialize activation lists
         self.layers_cache[name]["raw_inp"] = []
