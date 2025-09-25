@@ -2,7 +2,7 @@ base:
     seed: &seed 0
 model:
     type: Qwen2
-    path: /nfs/FM/chenshuailin/workflow/workflow_export/output/Qwen3-32B-bs8-no_rov_s200/ostquant_output/before_gptq
+    path: /nfs/AIED/ningpeiyang/2025/0924_prepare_weights/Qwen3_32B_OSTQuant_Intermediate_For_GPTQv2/
     torch_dtype: torch.float16
 calib:
     name: wikitext2
@@ -37,12 +37,14 @@ quant:
         online_rotate_exclude: ["o_proj"]
         eager_transform_dtype: True
         force_scale_dtype: True
+        # fp64_layers: ["model.layers.43.mlp.down_proj"] # for Qwen3-32B, layers.43.mlp.down_proj will use fp64
+        # fp64_layers: ["down_proj"] # all down_proj will use fp64
     quant_out: True
 save:
     save_trans: False
     save_fake: False
     save_vllm: True
-    save_path: /nfs/FM/chenshuailin/workflow/workflow_export/output/Qwen3-32B-bs8-no_rov_s200/llmc_gptqv2_force_dtype_fp16
+    save_path: /nfs/AIED/ningpeiyang/2025/0924_prepare_weights/Qwen3_32B_OSTQuant_Intermediate_llmc_gptqv2_force_dtype_fp16
 dispatch:
     num_gpus: 1
     first_gpu_extra_margin: 0.4

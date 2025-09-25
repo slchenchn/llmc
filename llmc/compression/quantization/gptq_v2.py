@@ -78,6 +78,7 @@ class GPTQv2(BaseBlockwiseQuantization):
         self.online_rotate_exclude = special_config.get("online_rotate_exclude", [])
         self.eager_transform_dtype = special_config.get("eager_transform_dtype", False)
         self.force_scale_dtype = special_config.get("force_scale_dtype", False)
+        self.fp64_layers = special_config.get("fp64_layers", [])
         logger.info(f"eager_transform_dtype: {self.eager_transform_dtype}")
         logger.info(f"force_scale_dtype: {self.force_scale_dtype}")
 
@@ -149,6 +150,14 @@ class GPTQv2(BaseBlockwiseQuantization):
         self.initialize_qparams_and_prepare_weights(layer, name)
         W, Hinv = self.process_hessian_and_weights(layer, name)
         self.update_layer_with_transformed_weights(layer, W, Hinv, name)
+
+    def get_layer_dtype(self, layer_name: str) -> torch.dtype:
+        # Match semantics similar to GPTQv3: substring match on full layer path
+        full_layer_name = f'{self.model.block_name_prefix}.{self.block_idx}.{layer_name}'
+        for pattern in self.fp64_layers:
+            if pattern in full_layer_name:
+                return torch.float64
+        return torch.float32
 
     def initialize_qparams_and_prepare_weights(self, layer, name):
         self.qparams = {}
@@ -244,7 +253,7 @@ class GPTQv2(BaseBlockwiseQuantization):
         H = torch.linalg.cholesky(H, upper=True)
         Hinv = H
         P = self.v2_alpha * ((dXXT @ Hinv.T).triu(diagonal=1)) @ Hinv
-        self.P = P
+        self.P = P.float()
 
         # Diagnostics after constructing P
         try:
@@ -254,7 +263,7 @@ class GPTQv2(BaseBlockwiseQuantization):
         logger.info(f"[GPTQv2][{name}] post-P: ||P||_F={P_fro:.4e}")
         safe_wandb_log({f"{name}/postP_P_fro": P_fro}, step=self.block_idx)
 
-        return W, Hinv
+        return W, Hinv.float()
 
     def update_layer_with_transformed_weights(self, layer, W, Hinv, name):
         Losses = torch.zeros_like(W)
@@ -416,7 +425,7 @@ class GPTQv2(BaseBlockwiseQuantization):
 
     @torch.no_grad()
     def add_batch(self, layer, name, inp, out, fp_inp):
-        world_size = int(os.environ["WORLD_SIZE"])
+        world_size = int(os.environ["WORLD_SIZE"])  # noqa: F841 - reserved for distributed support
         if len(inp.shape) == 2:
             inp = inp.unsqueeze(0)
             fp_inp = fp_inp.unsqueeze(0)
@@ -477,13 +486,16 @@ class GPTQv2(BaseBlockwiseQuantization):
         self.layers_cache[name]["dXXT"] *= prev_bs / cur_bs
         self.layers_cache[name]["nsamples"] = cur_bs
 
+        # Determine computation dtype for this layer
+        target_dtype = self.get_layer_dtype(name)
+
         for idx, chunk in enumerate(chunks):
-            chunk = math.sqrt(2 / self.layers_cache[name]["nsamples"]) * chunk.float()
+            chunk = math.sqrt(2 / self.layers_cache[name]["nsamples"]) * chunk.to(dtype=target_dtype)
             self.layers_cache[name]["H"] += chunk.matmul(chunk.t())
 
             fp_chunk = fp_chunks[idx]
             fp_chunk = (
-                math.sqrt(2 / self.layers_cache[name]["nsamples"]) * fp_chunk.float()
+                math.sqrt(2 / self.layers_cache[name]["nsamples"]) * fp_chunk.to(dtype=target_dtype)
             )
 
             if (
@@ -522,14 +534,16 @@ class GPTQv2(BaseBlockwiseQuantization):
             W = W.flatten(1)
         if isinstance(layer, transformers.Conv1D):
             W = W.t()
+        dtype = self.get_layer_dtype(name)
+        logger.info(f"{name} is {dtype} layer")
         self.layers_cache[name]["H"] = torch.zeros(
-            (W.shape[1], W.shape[1]), device=self.dev
+            (W.shape[1], W.shape[1]), device=self.dev, dtype=dtype
         )
         self.layers_cache[name]["nsamples"] = 0
         self.layers_cache[name]["columns"] = W.shape[1]
         # Optional cross-covariance accumulator
         self.layers_cache[name]["dXXT"] = torch.zeros(
-            (W.shape[1], W.shape[1]), device=self.dev
+            (W.shape[1], W.shape[1]), device=self.dev, dtype=dtype
         )
 
     @torch.no_grad()
