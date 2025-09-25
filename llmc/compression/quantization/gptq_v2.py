@@ -13,7 +13,7 @@ import functools
 from llmc.utils.utils import get_decoder_layer_ori_device
 from tqdm import trange
 
-import wandb
+from llmc.utils.loggings import safe_wandb_log
 from llmc.utils.registry_factory import ALGO_REGISTRY
 
 from .base_blockwise_quantization import BaseBlockwiseQuantization
@@ -217,7 +217,7 @@ class GPTQv2(BaseBlockwiseQuantization):
         logger.info(
             f"[GPTQv2][{name}] pre-P: ||H||_F={H_fro:.4e}, ||dXXT||_F={dXXT_fro:.4e}, ratio={ratio:.2%}"
         )
-        wandb.log(
+        safe_wandb_log(
             {
                 f"{name}/preP_H_fro": H_fro,
                 f"{name}/preP_dXXT_fro": dXXT_fro,
@@ -237,7 +237,7 @@ class GPTQv2(BaseBlockwiseQuantization):
         except Exception:
             logger.info(f'[GPTQv2][{name}] H cond num=inf')
             cond_val = float("inf")
-        wandb.log({f"{name}/H_cond_num": cond_val}, step=self.block_idx)
+        safe_wandb_log({f"{name}/H_cond_num": cond_val}, step=self.block_idx)
 
         H = torch.linalg.cholesky(H)
         H = torch.cholesky_inverse(H)
@@ -252,7 +252,7 @@ class GPTQv2(BaseBlockwiseQuantization):
         except Exception:
             P_fro = torch.norm(P, p="fro").item()
         logger.info(f"[GPTQv2][{name}] post-P: ||P||_F={P_fro:.4e}")
-        wandb.log({f"{name}/postP_P_fro": P_fro}, step=self.block_idx)
+        safe_wandb_log({f"{name}/postP_P_fro": P_fro}, step=self.block_idx)
 
         return W, Hinv
 
@@ -264,7 +264,7 @@ class GPTQv2(BaseBlockwiseQuantization):
         torch.cuda.synchronize()
         total_error = torch.sum(Losses).item()
         logger.info(f"error {total_error}")
-        wandb.log(
+        safe_wandb_log(
             {
                 f"{name}/gptq error": total_error,
             },
