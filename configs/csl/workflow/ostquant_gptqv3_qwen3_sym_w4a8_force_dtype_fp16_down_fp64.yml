@@ -43,7 +43,7 @@ save:
     save_trans: False
     save_fake: False
     save_vllm: True
-    save_path: /nfs/FM/chenshuailin/workflow/workflow_export/output/Qwen3-32B-bs8-no_rov_s200/llmc_gptqv3_force_dtype_fp16_down_fp64
+    save_path: /nfs/FM/chenshuailin/workflow/workflow_export/output/Qwen3-32B-bs8-no_rov_s200/llmc_gptqv3_force_dtype_fp16_down_fp64_torch260_A800
 dispatch:
     num_gpus: 1
     first_gpu_extra_margin: 0.0

@@ -2,7 +2,7 @@ base:
     seed: &seed 0
 model:
     type: Qwen2
-    path: /nfs/AIED/ningpeiyang/2025/0924_prepare_weights/Qwen3_32B_OSTQuant_Intermediate_For_GPTQv2/
+    path: /nfs/FM/chenshuailin/workflow/workflow_export/output/Qwen3-32B-bs8-no_rov_s200/ostquant_output/before_gptq
     torch_dtype: torch.float16
 calib:
     name: wikitext2
@@ -44,7 +44,7 @@ save:
     save_trans: False
     save_fake: False
     save_vllm: True
-    save_path: /nfs/AIED/ningpeiyang/2025/0924_prepare_weights/Qwen3_32B_OSTQuant_Intermediate_llmc_gptqv2_force_dtype_fp16
+    save_path: /nfs/FM/chenshuailin/workflow/workflow_export/output/Qwen3-32B-bs8-no_rov_s200/llmc_gptqv2_force_dtype_fp16_torch260_cu124_A800.bk
 dispatch:
     num_gpus: 1
     first_gpu_extra_margin: 0.4

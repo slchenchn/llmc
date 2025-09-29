@@ -18,7 +18,7 @@ quant:
     special:
         rotate_mode: hadamard
         fp32_had: True
-        online_rotate: True
+        online_rotate: False
 save:
     save_fake: True
     # save_trans: True

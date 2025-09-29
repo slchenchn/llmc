@@ -2,16 +2,16 @@ base:
     seed: &seed 0
 model:
     type: Qwen2
-    path: checkpoints/Qwen2.5-3B-Instruct/quarot/nvfp4_w4a16_sgs_olrotate/transformed_model
-    torch_dtype: auto
+    path: /nfs/FM/chenshuailin/workflow/workflow_export/output/Qwen3-32B-bs8-no_rov_s200/ostquant_output/before_gptq
+    torch_dtype: torch.float16
 calib:
     name: wikitext2
     path: data/wikitext2
     preproc: wikitext2_gptq
     download: False
-    n_samples: 128
+    n_samples: 64
     bs: 1
-    seq_len: 2048
+    seq_len: 1024
     seed: *seed
 quant:
     method: GPTQv2
@@ -34,14 +34,17 @@ quant:
         true_sequential: True
         online_rotate: True
         fp32_had: True
+        online_rotate_exclude: ["o_proj"]
         eager_transform_dtype: True
         force_scale_dtype: True
+        # fp64_layers: ["model.layers.43.mlp.down_proj"] # for Qwen3-32B, layers.43.mlp.down_proj will use fp64
+        # fp64_layers: ["down_proj"] # all down_proj will use fp64
     quant_out: True
 save:
-    # save_trans: True
-    # save_fake: True
+    save_trans: False
+    save_fake: False
     save_vllm: True
-    save_path: checkpoints/Qwen2.5-3B-Instruct/gptqv2/quarot_olrotate_gptqv2_sym_w4a8_force_dtype.bk
+    save_path: /nfs/FM/chenshuailin/workflow/workflow_export/output/Qwen3-32B-bs8-no_rov_s200/llmc_gptqv2_force_dtype_fp16_n64_seq1k_torch260_cu124_A800
 dispatch:
     num_gpus: 1
     first_gpu_extra_margin: 0.4

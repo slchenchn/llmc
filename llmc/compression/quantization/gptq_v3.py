@@ -20,7 +20,7 @@ from .module_utils import (
     RotateLinear,
 )
 
-import wandb
+from llmc.utils.loggings import safe_wandb_log
 
 
 @ALGO_REGISTRY
@@ -77,8 +77,10 @@ class GPTQv3(BaseBlockwiseQuantization):
         self.fp64_layers = special_config.get("fp64_layers", [])
         self.eager_transform_dtype = special_config.get("eager_transform_dtype", False)
         self.force_scale_dtype = special_config.get("force_scale_dtype", False)
+        self.exclude_first_n_tokens = special_config.get("exclude_first_n_tokens", 0)
         logger.info(f"eager_transform_dtype: {self.eager_transform_dtype}")
         logger.info(f"force_scale_dtype: {self.force_scale_dtype}")
+        logger.info(f"exclude_first_n_tokens: {self.exclude_first_n_tokens}")
 
     def hessian_sorting(self, name):
         H = self.layers_cache[name]["H"]
@@ -153,8 +155,9 @@ class GPTQv3(BaseBlockwiseQuantization):
 
     def get_layer_dtype(self, layer_name: str) -> torch.dtype:
         # Match semantics similar to online_rotate_exclude: substring match
+        full_layer_name = f'{self.model.block_name_prefix}.{self.block_idx}.{layer_name}'
         for pattern in self.fp64_layers:
-            if pattern in layer_name:
+            if pattern in full_layer_name:
                 # logger.info(f"{layer_name} is fp64 layer")
                 return torch.float64
         return torch.float32
@@ -175,8 +178,7 @@ class GPTQv3(BaseBlockwiseQuantization):
         elif isinstance(layer, transformers.Conv1D):
             W = W.t()
 
-        target_dtype = self.get_layer_dtype(name)
-        W = W.to(dtype=target_dtype)
+        W = W.float()
         H = self.layers_cache[name].pop("H")
         dXXT = self.layers_cache[name].pop("dXXT")
 
@@ -228,7 +230,7 @@ class GPTQv3(BaseBlockwiseQuantization):
             f"[GPTQv3][{name}] pre-P: ||H||_F={H_fro:.4e}, ||dXXT||_F={dXXT_fro:.4e}, ratio={ratio:.2%}"
         )
         # wandb logging for norms before constructing P
-        wandb.log(
+        safe_wandb_log(
             {
                 f"{name}/preP_H_fro": H_fro,
                 f"{name}/preP_dXXT_fro": dXXT_fro,
@@ -249,14 +251,17 @@ class GPTQv3(BaseBlockwiseQuantization):
             logger.info(f"[GPTQv3][{name}] H cond num=inf")
             cond_val = float("inf")
         # wandb logging for condition number
-        wandb.log({f"{name}/H_cond_num": cond_val}, step=self.block_idx)
+        safe_wandb_log({f"{name}/H_cond_num": cond_val}, step=self.block_idx)
 
         H = torch.linalg.cholesky(H)
         H = torch.cholesky_inverse(H)
         H = torch.linalg.cholesky(H, upper=True)
         Hinv = H
+        Hinv_diag_min = torch.diag(Hinv).min().item()
+        logger.info(f"[GPTQv3][{name}] Hinv diag min={Hinv_diag_min:.4e}")
+        safe_wandb_log({f"{name}/Hinv_diag_min": Hinv_diag_min}, step=self.block_idx)
         P = self.v2_alpha * ((dXXT @ Hinv.T).triu(diagonal=1)) @ Hinv
-        self.P = P
+        self.P = P.float()
 
         # Diagnostics after constructing P
         try:
@@ -265,9 +270,9 @@ class GPTQv3(BaseBlockwiseQuantization):
             P_fro = torch.norm(P, p="fro").item()
         logger.info(f"[GPTQv3][{name}] post-P: ||P||_F={P_fro:.4e}")
         # wandb logging for P Frobenius norm
-        wandb.log({f"{name}/postP_P_fro": P_fro}, step=self.block_idx)
+        safe_wandb_log({f"{name}/postP_P_fro": P_fro}, step=self.block_idx)
 
-        return W, Hinv
+        return W, Hinv.float()
 
     def update_layer_with_transformed_weights(self, layer, W, Hinv, name):
         orig_dtype = layer.weight.dtype
@@ -279,7 +284,7 @@ class GPTQv3(BaseBlockwiseQuantization):
         total_error = torch.sum(Losses).item()
         logger.info(f"error {total_error}")
         # wandb logging for final loss/error
-        wandb.log(
+        safe_wandb_log(
             {
                 f"{name}/gptq error": total_error,
             },
@@ -476,6 +481,7 @@ class GPTQv3(BaseBlockwiseQuantization):
         H = self.layers_cache[name]["H"]
         dXXT = self.layers_cache[name]["dXXT"]
 
+        target_dtype = self.get_layer_dtype(name)
         total = len(raw_inps)
         if batchsize is None or batchsize <= 0:
             batchsize = total
@@ -493,6 +499,16 @@ class GPTQv3(BaseBlockwiseQuantization):
             ):
                 assert torch.allclose(inp, fp_inp)
 
+
+            # Exclude first n tokens if specified
+            if self.exclude_first_n_tokens > 0:
+                if inp.shape[-1] <= self.exclude_first_n_tokens:
+                    raise ValueError(
+                        f"inp.shape[-1]({inp.shape[-1]}) <= self.exclude_first_n_tokens({self.exclude_first_n_tokens})"
+                    )
+                inp = inp[self.exclude_first_n_tokens :]
+                fp_inp = fp_inp[self.exclude_first_n_tokens :]
+
             if isinstance(layer, RotateLinear):
                 fp_inp = layer.rotater.rotate(fp_inp)
                 inp = layer.rotater.rotate(inp)
@@ -506,7 +522,6 @@ class GPTQv3(BaseBlockwiseQuantization):
                 inp = inp.t()  # [D, N_b]
                 fp_inp = fp_inp.t()
 
-            target_dtype = self.get_layer_dtype(name)
             inp_float = inp.to(dtype=target_dtype)
             fp_inp_float = fp_inp.to(dtype=target_dtype)
 

@@ -10,7 +10,7 @@ import torch.distributed as dist
 import torch.nn as nn
 import transformers
 from loguru import logger
-import wandb
+from llmc.utils.loggings import safe_wandb_log
 
 from llmc.utils.registry_factory import ALGO_REGISTRY
 
@@ -186,7 +186,7 @@ class GPTQ(BaseBlockwiseQuantization):
         except Exception:
             logger.info(f'[GPTQ][{name}] H cond num=inf')
             cond_val = float("inf")
-        wandb.log({f"{name}/H_cond_num": cond_val}, step=self.block_idx)
+        safe_wandb_log({f"{name}/H_cond_num": cond_val}, step=self.block_idx)
 
         H = torch.linalg.cholesky(H)
         H = torch.cholesky_inverse(H)
@@ -202,7 +202,7 @@ class GPTQ(BaseBlockwiseQuantization):
         torch.cuda.synchronize()
         total_error = torch.sum(Losses).item()
         logger.info(f"error {total_error}")
-        wandb.log(
+        safe_wandb_log(
             {
                 f"{name}/gptq error": total_error,
             },

@@ -24,6 +24,21 @@ nproc_per_node=1
 PORT=${PORT:-29556}
 
 
+
+# proxy
+
+export PROXY_ADDRESS="192.168.34.40"
+export PROXY_PORT="10808"
+
+export ALL_PROXY="http://$PROXY_ADDRESS:$PROXY_PORT"
+# export ALL_PROXY="socks5://$PROXY_ADDRESS:$PROXY_PORT"
+export HTTP_PROXY=$ALL_PROXY
+export HTTPS_PROXY=$ALL_PROXY
+echo "代理已启用: $ALL_PROXY"
+
+# wandb
+export WANDB_API_KEY=08adc7c6e886eb9a65ef9630d3f06f2b09e9ddb4
+
 MASTER_ADDR=127.0.0.1
 MASTER_PORT=$PORT
 task_id=$PORT
@@ -34,7 +49,7 @@ timestamp=$(date +"%Y%m%d_%H%M%S")
 LOG_DIR=${2:-logs}
 log_path=${LOG_DIR}/${task_name}_${timestamp}.log
 
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
 mkdir -p ${LOG_DIR}
 torchrun \
 --nnodes $nnodes \

@@ -36,6 +36,7 @@ from llmc.utils import (
     update_autoawq_quant_config,
     update_vllm_quant_config,
 )
+from llmc.utils.loggings import setup_wandb
 from llmc.utils.registry_factory import ALGO_REGISTRY, MODEL_REGISTRY
 
 
@@ -349,20 +350,6 @@ def main(config):
             logger.info(f"opencompass_cmd: {opencompass_cmd}")
             os.system(opencompass_cmd)
     dist.barrier()
-
-
-def setup_wandb(args, config):
-    import wandb
-
-    wandb.login()
-    cfg_path = Path(args.config)
-
-    wandb.init(
-        project="llmc",
-        group=cfg_path.parent.name,
-        name=cfg_path.stem,
-        config=config,
-    )
 
 
 if __name__ == "__main__":
