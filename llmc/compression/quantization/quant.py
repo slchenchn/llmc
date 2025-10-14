@@ -1044,6 +1044,50 @@ class IntegerQuantizer(BaseQuantizer):
 
         return weight, scales, zeros
 
+    def real_quant_act_dynamic(self, act, args={}):
+        org_act_shape = act.shape
+        if "output_scale_factor" in args:
+            raise ValueError(
+                "output_scale_factor is not supported for real_quant_act_dynamic"
+            )
+
+        act, scales, zeros, qmax, qmin = self.get_tensor_qparams(act, args)
+        if self.granularity == "per_block":
+            act = self.block_quant(act, scales)
+            act = torch.clamp(
+                self.round_func(act),
+                qmin,
+                qmax,
+            )
+        else:
+            act = self.quant(act, scales, zeros, qmax, qmin)
+        act = self.restore_tensor(act, org_act_shape)
+        if self.bit in (4, 8):
+            if self.qmin != 0:
+                dtype = torch.int8
+            else:
+                dtype = torch.uint8
+        else:
+            dtype = torch.int32
+        act = act.to(dtype)
+        if not self.sym and self.round_zp:
+            zeros = zeros.to(dtype)
+        elif self.sym:
+            zeros = None
+
+        if self.granularity == "per_tensor":
+            qparams_shape = 1
+        elif self.granularity == "per_block":
+            qparams_shape = scales.shape
+        else:
+            qparams_shape = (act.shape[0], -1)
+
+        if zeros is not None:
+            zeros = zeros.view(qparams_shape)
+        scales = scales.view(qparams_shape)
+
+        return act, scales, zeros
+
     def __repr__(self):
         return (
             f"IntegerQuantizer(bit={self.bit}, sym={self.sym},"

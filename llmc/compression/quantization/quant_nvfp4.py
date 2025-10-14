@@ -12,13 +12,13 @@ class FP8_E4M3_DATA:
     dtype = torch.float8_e4m3fn
 
     @staticmethod
-    @torch.compile
+    # @torch.compile
     def cast_to_fp8(x):
         x = x.clamp(FP8_E4M3_DATA.min, FP8_E4M3_DATA.max)
         return x.to(FP8_E4M3_DATA.dtype)
 
     @staticmethod
-    @torch.compile
+    # @torch.compile
     def cast_to_positive_fp8(x):
         x = x.float().clamp(FP8_E4M3_DATA.min_positive, FP8_E4M3_DATA.max)
         return x.to(FP8_E4M3_DATA.dtype)
@@ -332,3 +332,22 @@ class NVFP4Quantizer(BaseQuantizer):
 
         act = self.restore_tensor(act, org_act_shape).to(org_act_dtype)
         return act
+
+    def real_quant_act_dynamic(self, act, args={}):
+        org_act_shape = act.shape
+
+        # Optional post scaling factor for output scales (e.g., to fold into kernel)
+        if "output_scale_factor" in args:
+            raise NotImplementedError
+
+        act, global_scale, local_scales, qmax, qmin = self.get_tensor_qparams(act, args)
+        act = self.quant(act, global_scale, local_scales, qmax, qmin)
+        act = self.restore_tensor(act, org_act_shape)
+
+        local_scales = local_scales.view(*org_act_shape[:-1], org_act_shape[-1] // 16)
+
+        assert len(act.unique()) <= 15
+        assert global_scale.dtype == torch.float32
+        assert global_scale.numel() == 1
+        assert local_scales.dtype == torch.float8_e4m3fn
+        return act, global_scale, local_scales
