@@ -46,36 +46,23 @@ class HadamardTransform:
         return torch.matmul(x.view(-1, self.group_size), H).view(x_shape)
 
 
-def get_quantizers():
-    """Get the three quantizers used in analysis."""
-    quantizer_fp4 = NVFP4Quantizer(
+def get_quantizers(ignore_qunatizers):
+    quantizer_nvfp4 = NVFP4Quantizer(
         bit=4, symmetric=True, granularity="per_group", group_size=16
     )
     quantizer_int4 = IntegerQuantizer(bit=4, symmetric=True, granularity="per_channel")
     quantizer_int4_group16 = IntegerQuantizer(
         bit=4, symmetric=True, granularity="per_group", group_size=16
     )
-    return {
-        "NVFP4": quantizer_fp4,
+    quantizers = {
+        "NVFP4": quantizer_nvfp4,
         "INT4": quantizer_int4,
         "INT4_G16": quantizer_int4_group16,
     }
 
-
-def get_quantizers_for_activations():
-    """Get quantizers that support activation quantization."""
-    quantizer_fp4 = NVFP4Quantizer(
-        bit=4, symmetric=True, granularity="per_group", group_size=16
-    )
-    quantizer_int4 = IntegerQuantizer(bit=4, symmetric=True, granularity="per_channel")
-    quantizer_int4_group16 = IntegerQuantizer(
-        bit=4, symmetric=True, granularity="per_group", group_size=16
-    )
-    return {
-        "NVFP4": quantizer_fp4,
-        "INT4": quantizer_int4,
-        "INT4_G16": quantizer_int4_group16,
-    }
+    for quantizer in ignore_qunatizers:
+        quantizers.pop(quantizer)
+    return quantizers
 
 
 def plot_quantization_errors(

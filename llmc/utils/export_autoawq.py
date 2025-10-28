@@ -17,7 +17,8 @@ def update_autoawq_quant_config(
         'modules_to_not_convert': None,
         'quant_method': 'awq',
         'version': config.quant.weight.pack_version.split('_')[0],
-        'zero_point': not config.quant.weight.symmetric
+        'zero_point': True
+        # 'zero_point': not config.quant.weight.symmetric
     }
 
     config_file = save_quant_path + '/config.json'

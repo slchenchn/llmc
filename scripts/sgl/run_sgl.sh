@@ -35,7 +35,7 @@ if [ "$NUM_INSTANCES" -lt 1 ]; then
     exit 1
 fi
 
-BASE_PORT=${BASE_PORT:-30000}
+BASE_PORT=${BASE_PORT:-8200}
 HOST=${HOST:-0.0.0.0}
 
 for (( i=0; i<NUM_INSTANCES; i++ )); do
@@ -50,7 +50,8 @@ for (( i=0; i<NUM_INSTANCES; i++ )); do
         --model "$MODEL" \
         --tp "$TP" \
         --trust-remote-code \
-        --disable-cuda-graph \
+        --enable-torch-compile \
+        --torch-compile-max-bs 64 \
         --port "$PORT" \
         --host "$HOST" \
         "$@" &

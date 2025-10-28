@@ -66,7 +66,7 @@ class RTN(BaseBlockwiseQuantization):
             self.register_kv_cache(block)
 
         weight_cfg = self.quant_config.weight
-        if weight_cfg.quant_type == "nvfp4" and weight_cfg.share_global_scale:
+        if getattr(weight_cfg, "quant_type", None) == "int-quant" and getattr(weight_cfg, "share_global_scale", False):
             # self.get_shared_global_absmax(block)
             self.collect_block_qparams(block)
 
@@ -85,7 +85,7 @@ class RTN(BaseBlockwiseQuantization):
     @torch.no_grad()
     def w_q(self, module, wquantizer):
         weight_cfg = self.quant_config.weight
-        if weight_cfg.quant_type == "nvfp4" and weight_cfg.share_global_scale:
+        if getattr(weight_cfg, "quant_type", None) == "int-quant" and getattr(weight_cfg, "share_global_scale", False):
             args = {"global_scale": getattr(module, "buf_global_scale", None)}
         else:
             args = {}
