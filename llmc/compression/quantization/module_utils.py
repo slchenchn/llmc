@@ -958,7 +958,7 @@ class AutoawqRealQuantLinear(nn.Module):
     @torch.no_grad()
     def gemm_pack(self, weight, scales, zeros, quant_config):
         if zeros is not None:
-            zeros = zeros.t().contiguous()
+            zeros = zeros.to(torch.int32).t().contiguous()
         scales = scales.t().contiguous()
         weight = weight.to(torch.int32).t().contiguous()
 
@@ -966,38 +966,37 @@ class AutoawqRealQuantLinear(nn.Module):
         pack_num = 32 // bit
 
         int_weight = torch.zeros(
-            (weight.shape[0], weight.shape[1] // 32 * bit),
+            (weight.shape[0], weight.shape[1] // pack_num),
             dtype=torch.int32,
             device=weight.device,
         )
 
+        if bit == 4:
+            order_map = [0, 2, 4, 6, 1, 3, 5, 7]
+        else:
+            raise NotImplementedError("Only 4-bit are supported for now.")
+            
         for col in range(weight.shape[1] // pack_num):
-            if bit == 4:
-                order_map = [0, 2, 4, 6, 1, 3, 5, 7]
-            else:
-                raise NotImplementedError("Only 4-bit are supported for now.")
             for i in range(pack_num):
                 int_weight_col = weight[:, col * pack_num + order_map[i]]
                 int_weight[:, col] |= int_weight_col << (i * bit)
 
         if zeros is not None:
             int_zeros = torch.zeros(
-                (zeros.shape[0], zeros.shape[1] // 32 * bit),
+                (zeros.shape[0], zeros.shape[1] // pack_num),
                 dtype=torch.int32,
                 device=zeros.device,
             )
 
             for col in range(zeros.shape[1] // pack_num):
-                if bit == 4:
-                    order_map = [0, 2, 4, 6, 1, 3, 5, 7]
-                else:
-                    raise NotImplementedError("Only 4-bit are supported for now.")
+                
                 for i in range(pack_num):
                     intzero_col = zeros[:, col * pack_num + order_map[i]]
                     int_zeros[:, col] |= intzero_col << (i * bit)
         else:
             int_zeros = None
-        del weight
+        # del weight
+
         return int_weight, scales, int_zeros
 
     @classmethod
