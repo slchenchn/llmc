@@ -1,0 +1,38 @@
+base:
+    seed: &seed 42
+model:
+    type: Qwen2
+    path: /nfs/FM/chenshuailin/checkpoints/Qwen/Qwen2.5-3B-Instruct/
+    tokenizer_mode: fast
+    torch_dtype: torch.bfloat16
+quant:
+    method: Quarot
+    weight:
+        quant_type: nvfp4
+        bit: 4
+        symmetric: True
+        granularity: per_group
+        group_size: 16
+        share_global_scale: True
+    act:
+        quant_type: nvfp4
+        bit: 4
+        symmetric: True
+        granularity: per_group
+        group_size: 16
+        share_global_scale: True
+        calib_algo: static_minmax
+        static: True
+    special:
+        rotate_mode: hadamard
+        true_sequential: True
+        online_rotate: False
+        fp32_had: True
+        rotate_groupsize: 16
+save:
+    save_trans: True
+    # save_fake: False
+    # save_vllm_nvfp4: True
+    save_path: checkpoints/Qwen2.5-3B-Instruct/quarot/group_rotate_g16
+dispatch:
+    num_gpus: 1

@@ -2,7 +2,7 @@ base:
     seed: &seed 0
 model:
     type: Qwen2
-    path: checkpoints/Qwen2.5-3B-Instruct/quarot/sym_w4a8-dynamic_ol-rotate/transformed_model
+    path: checkpoints/Qwen2.5-3B-Instruct/quarot/nvfp4_w4a16_sgs_olrotate/transformed_model_cleaned
     torch_dtype: auto
 calib:
     name: wikitext2

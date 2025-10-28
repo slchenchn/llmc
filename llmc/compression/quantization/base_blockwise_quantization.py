@@ -805,7 +805,7 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
             self.aquantizer.get_batch_tensors_qparams(act_tensors)
         )
         world_size = int(os.environ["WORLD_SIZE"])
-
+        assert world_size == 1, "LLMC does not support distributed training, indeed"
         for i, (scales, zeros, qmin, qmax) in enumerate(
             zip(scales_list, zeros_list, qmin_list, qmax_list)
         ):
@@ -1038,7 +1038,10 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
                     layer.weight.data, layer.weight_scale_inv.data
                 ).to(torch.bfloat16)
             dtype = layer.weight.dtype
-            layer.weight.data = torch.matmul(layer.weight.data.double(), Q).to(dtype)
+            # layer.weight.data = torch.matmul(layer.weight.data.double(), Q).to(dtype)
+            layer.weight.data = self.matmul_XQ_auto_reshape(
+                layer.weight.data.double(), Q
+            ).to(dtype)
 
             if hasattr(layer, "weight_scale_inv"):
                 update_block_wise_scales(layer)
@@ -1054,7 +1057,12 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
                     layer.weight.data, layer.weight_scale_inv.data
                 ).to(torch.bfloat16)
             dtype = layer.weight.dtype
-            layer.weight.data = torch.matmul(Q.T, layer.weight.data.double()).to(dtype)
+
+            if self.offline_rotate:
+                # layer.weight.data = torch.matmul(Q.T, layer.weight.data.double()).to(dtype)
+                layer.weight.data = self.matmul_QX_auto_reshape(
+                    Q.T, layer.weight.data.double()
+                ).to(dtype)
 
             if exact_had and self.online_rotate:
                 apply_exact_had_to_linear(layer, had_dim=-1, output=False)
@@ -1076,14 +1084,20 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
         for layer in embeddings:
             dtype = layer.weight.data.dtype
             W = layer.weight.data.to(device=self.dev, dtype=torch.float64)
-            layer.weight.data = torch.matmul(W, Q).to(device="cpu", dtype=dtype)
+            # layer.weight.data = torch.matmul(W, Q).to(device="cpu", dtype=dtype)
+            layer.weight.data = self.matmul_XQ_auto_reshape(W, Q).to(
+                device="cpu", dtype=dtype
+            )
 
     def rotate_head(self, Q):
         heads = self.model.get_head_layers()
         for layer in heads:
             dtype = layer.weight.data.dtype
             W = layer.weight.data.to(device=self.dev, dtype=torch.float64)
-            layer.weight.data = torch.matmul(W, Q).to(device="cpu", dtype=dtype)
+            # layer.weight.data = torch.matmul(W, Q).to(device="cpu", dtype=dtype)
+            layer.weight.data = self.matmul_XQ_auto_reshape(W, Q).to(
+                device="cpu", dtype=dtype
+            )
 
     def fuse_ln_fcs(self, ln, fcs):
         for fc in fcs:

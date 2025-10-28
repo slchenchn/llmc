@@ -41,4 +41,5 @@ debug.py
 aihub/
 tools/
 wandb/
+third_party/
 set_api_key.sh

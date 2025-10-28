@@ -33,7 +33,29 @@ class Quarot(BaseBlockwiseQuantization):
         else:
             logger.info("quarot: Not preprocess the model")
 
+    def matmul_QX_auto_reshape(self, Q, X):
+        x_ori_shape = X.shape
+        g = self.rotate_groupsize
+        assert x_ori_shape[-2] % g == 0, (
+            "X.shape[-2] % rotate_groupsize must be 0 for left-multiply grouping"
+        )
+        XT = X.transpose(-2, -1).contiguous()
+        YT = self.matmul_XQ_auto_reshape(XT, Q.T)
+        return YT.transpose(-2, -1)
+
+    def matmul_XQ_auto_reshape(self, X, Q):
+        assert X.shape[-1] % self.rotate_groupsize == 0, (
+            "X.shape[-1] % rotate_groupsize must be 0 for right-multiply grouping"
+        )
+        x_ori_shape = X.shape
+        y = torch.matmul(X.contiguous().view(-1, self.rotate_groupsize), Q)
+        return y.view(x_ori_shape)
+
     def preprocess(self):
+        if not self.offline_rotate:
+            self.Q = None
+            return
+
         if torch.equal(
             self.model.get_head_layers()[0].weight,
             self.model.get_embed_layers()[0].weight,
@@ -96,6 +118,12 @@ class Quarot(BaseBlockwiseQuantization):
     @torch.inference_mode()
     def add_quant_config(self):
         self.rotate_mode = self.quant_config["special"]["rotate_mode"]
+        self.rotate_groupsize = self.quant_config["special"].get(
+            "rotate_groupsize", self.hidden_size
+        )
+        self.offline_rotate = self.quant_config["special"].get("offline_rotate", True)
+        logger.info(f"rotate_groupsize: {self.rotate_groupsize}")
+        logger.info(f"offline_rotate: {self.offline_rotate}")
 
     def random_orthogonal_matrix(self, size, device):
         torch.cuda.empty_cache()
@@ -106,9 +134,9 @@ class Quarot(BaseBlockwiseQuantization):
 
     def get_orthogonal_matrix(self):
         if self.rotate_mode == "random":
-            return self.random_orthogonal_matrix(self.hidden_size, self.dev)
+            return self.random_orthogonal_matrix(self.rotate_groupsize, self.dev)
         elif self.rotate_mode == "hadamard":
-            return random_hadamard_matrix(self.hidden_size, self.dev)
+            return random_hadamard_matrix(self.rotate_groupsize, self.dev)
         else:
             raise ValueError(f"Unsupported mode {self.mode}")
 
@@ -131,9 +159,9 @@ class Quarot(BaseBlockwiseQuantization):
     def subset_transform(self, block, subset):
         prev_op = subset["prev_op"]
         layers_dict = subset["layers"]
-        assert (
-            len(prev_op) == 1
-        ), "Only support single prev_op. If multi prev_ops, code need to be updated."
+        assert len(prev_op) == 1, (
+            "Only support single prev_op. If multi prev_ops, code need to be updated."
+        )
 
         layers = list(layers_dict.values())
 
@@ -141,15 +169,16 @@ class Quarot(BaseBlockwiseQuantization):
             return
 
         if isinstance(prev_op[0], tuple(_LLMC_LN_TYPES_ + _TRANSFORMERS_LN_TYPES_)):
-            self.fuse_ln_fcs(prev_op[0], layers)
-            self.rotate_pre_layers(layers, self.Q)
-            # if self.online_rotate and 'v_proj' in layers_dict:
-            #     ''' take care of the bias of v_proj '''
-            #     v_proj = layers_dict['self_attn.v_proj']
-            #     if hasattr(v_proj, 'bias'):
-            #         b = v_proj.bias.data.to(torch.float64)
-            #         b = torch.matmul(self.Q.T, b)
-            #         .to(v_proj.bias.dtype)
+            if self.offline_rotate:
+                self.fuse_ln_fcs(prev_op[0], layers)
+                self.rotate_pre_layers(layers, self.Q)
+                # if self.online_rotate and 'v_proj' in layers_dict:
+                #     ''' take care of the bias of v_proj '''
+                #     v_proj = layers_dict['self_attn.v_proj']
+                #     if hasattr(v_proj, 'bias'):
+                #         b = v_proj.bias.data.to(torch.float64)
+                #         b = torch.matmul(self.Q.T, b)
+                #         .to(v_proj.bias.dtype)
         else:
             if self.config["model"]["type"] in ["Opt", "StableLm"]:
                 self.bake_mean_into_fc(layers[0])
