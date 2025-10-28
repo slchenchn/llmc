@@ -48,7 +48,7 @@ class FP4_E2M1_DATA:
 
 
 class NVFP4Quantizer(BaseQuantizer):
-    def __init__(self, bit, symmetric, granularity, **kwargs):
+    def __init__(self, bit, symmetric, granularity, arbitrary_group_size=False, **kwargs):
         super().__init__(bit, symmetric, granularity, **kwargs)
         self.quant_type = "nvfp4-quant"
         assert symmetric, "NVFP4 is always symmetric"
@@ -69,7 +69,7 @@ class NVFP4Quantizer(BaseQuantizer):
         assert self.granularity == "per_group", (
             "NVFP4Quantizer only supports per_group granularity"
         )
-        assert self.group_size == 16, "NVFP4Quantizer only supports group_size=16"
+        assert arbitrary_group_size or self.group_size == 16, "NVFP4Quantizer only supports group_size=16"
 
     def get_mse_range(self, tensor, norm=2.4, bs=256):
         raise NotImplementedError
@@ -257,7 +257,7 @@ class NVFP4Quantizer(BaseQuantizer):
 
         local_scales = local_scales.float() * output_scale_factor
         local_scales = FP8_E4M3_DATA.cast_to_positive_fp8(local_scales)
-        local_scales = local_scales.view(org_w_shape[0], org_w_shape[1] // 16)
+        local_scales = local_scales.view(org_w_shape[0], org_w_shape[1] // self.group_size)
 
         assert len(weight.unique()) <= 15
         assert global_scale.dtype == torch.float32
@@ -291,7 +291,7 @@ class NVFP4Quantizer(BaseQuantizer):
 
         local_scales = local_scales.float() * output_scale_factor
         local_scales = FP8_E4M3_DATA.cast_to_positive_fp8(local_scales)
-        local_scales = local_scales.view(org_w_shape[0], org_w_shape[1] // 16)
+        local_scales = local_scales.view(org_w_shape[0], org_w_shape[1] // self.group_size)
 
         assert len(weight.unique()) <= 15
         assert global_scale.dtype == torch.float32
@@ -344,7 +344,7 @@ class NVFP4Quantizer(BaseQuantizer):
         act = self.quant(act, global_scale, local_scales, qmax, qmin)
         act = self.restore_tensor(act, org_act_shape)
 
-        local_scales = local_scales.view(*org_act_shape[:-1], org_act_shape[-1] // 16)
+        local_scales = local_scales.view(*org_act_shape[:-1], org_act_shape[-1] // self.group_size)
 
         assert len(act.unique()) <= 15
         assert global_scale.dtype == torch.float32

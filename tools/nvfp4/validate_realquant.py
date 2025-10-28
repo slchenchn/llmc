@@ -1,8 +1,10 @@
 from safetensors.torch import load_file
-from tqdm import tqdm, trange
+from tqdm import trange
 from pathlib import Path
 from transformers import AutoConfig
 import torch
+import json
+import argparse
 
 
 def check_shared_scales(state_dict, num_hidden_layers):
@@ -57,10 +59,73 @@ def check_dtype(state_dict):
     print("check dtype done")
 
 
-if __name__ == "__main__":
-    model_dir = Path(
-        "checkpoints/Qwen2.5-3B-Instruct/gptqv3/nvfp4_w4a4_sgs/vllm_nvfp4_quant_model"
+def check_quant_group_completeness(state_dict, require_input_global_scale):
+    print("\n-----------------------------------------------")
+    print("start checking quant group completeness...")
+
+    required_suffixes = (
+        "weight_packed",
+        "weight_scale",
+        "weight_global_scale",
     )
+    if require_input_global_scale:
+        required_suffixes = required_suffixes + ("input_global_scale",)
+
+    # base_name -> set(found_suffixes)
+    base_to_found = {}
+    for name in state_dict.keys():
+        # Only consider the four quantization-related suffixes
+        for suffix in required_suffixes:
+            if name.endswith(suffix):
+                base = name.rsplit(".", 1)[0]
+                found = base_to_found.get(base)
+                if found is None:
+                    found = set()
+                    base_to_found[base] = found
+                found.add(suffix)
+                break
+
+    # Validate that each base either has all 4 or none
+    for base, found in base_to_found.items():
+        if len(found) == 0:
+            continue
+        if len(found) != len(required_suffixes):
+            missing = [s for s in required_suffixes if s not in found]
+            raise AssertionError(
+                f"Quant group incomplete for '{base}': found {sorted(found)}, missing {missing}"
+            )
+
+    # If input scales are not required by config, assert they do not exist at all
+    if not require_input_global_scale:
+        for name in state_dict.keys():
+            if name.endswith("input_global_scale"):
+                raise AssertionError(
+                    f"Found unexpected input_global_scale '{name}' while config has no input_activations"
+                )
+
+    print("check quant group completeness done")
+
+
+def _should_require_input_global_scale(model_dir: Path) -> bool:
+    cfg_path = model_dir / "config.json"
+
+    with cfg_path.open("r") as f:
+        cfg = json.load(f)
+
+    group0 = cfg["quantization_config"]["config_groups"]["group_0"]
+
+    return "input_activations" in group0 and group0["input_activations"] is not None
+
+
+def get_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model_dir", type=str, required=True)
+    return parser.parse_args()
+
+
+if __name__ == "__main__":
+    args = get_args()
+    model_dir = Path(args.model_dir)
 
     state_dict = {}
     for safetensor in model_dir.glob("*.safetensors"):
@@ -68,6 +133,8 @@ if __name__ == "__main__":
 
     cfg = AutoConfig.from_pretrained(model_dir)
     check_shared_scales(state_dict, cfg.num_hidden_layers)
+    require_input_scale = _should_require_input_global_scale(model_dir)
+    check_quant_group_completeness(state_dict, require_input_scale)
     check_dtype(state_dict)
     # for layer in trange(cfg.num_hidden_layers):
 
