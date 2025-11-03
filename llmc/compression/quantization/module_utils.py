@@ -371,7 +371,14 @@ class OriginFloatLinear(nn.Module):
 
 class Rotater:
     def __init__(
-        self, online_full_had, online_partial_had, fp32_had, K, had_K=None, had_dim=None
+        self,
+        online_full_had,
+        online_partial_had,
+        fp32_had,
+        K,
+        had_K=None,
+        had_dim=None,
+        online_rotate_tp=1,
     ):
         self.online_full_had = online_full_had
         self.online_partial_had = online_partial_had
@@ -379,15 +386,49 @@ class Rotater:
         self.K = K
         self.had_K = had_K
         self.had_dim = had_dim
+        self.online_rotate_tp = online_rotate_tp
 
     def rotate(self, x):
         x_dtype = x.dtype
 
         if self.online_full_had:
-            if self.fp32_had:
-                x = matmul_hadU_cuda(x.float(), self.had_K, self.K).to(x_dtype)
+            if self.online_rotate_tp != 1:
+                # Block-wise FHT: reshape to (shape[0], shape[1], down_dim, -1), apply transform, then reshape back
+                # This follows the reference implementation in quant_ops.py
+                # Reference: out.reshape(shape[0], shape[1], self.down_dim, -1)
+                shape = x.shape
+                # For compatibility with reference code, ensure at least 2 dimensions
+                # If 2D input (tokens, dim), treat as (1, tokens, dim) -> (1, tokens, down_dim, dim // down_dim)
+                # If 3D+ input, use (shape[0], shape[1], down_dim, -1)
+                if len(shape) == 2:
+                    # 2D: (tokens, dim) -> (1, tokens, dim) -> (1, tokens, down_dim, dim // down_dim)
+                    x = x.view(1, shape[0], shape[1])  # (1, tokens, dim)
+                    x = x.reshape(1, shape[0], self.online_rotate_tp, shape[1] // self.online_rotate_tp)
+                    original_shape = shape
+                else:
+                    # 3D+: (batch, ..., dim) -> (shape[0], shape[1], down_dim, -1)
+                    x = x.reshape(shape[0], shape[1], self.online_rotate_tp, -1)
+                    original_shape = shape
+                if self.fp32_had:
+                    x = matmul_hadU_cuda(
+                        x.float().contiguous(),
+                        self.had_K,
+                        self.K,
+                    )
+                    x = x.reshape(original_shape)
+                    x = x.to(x_dtype)
+                else:
+                    x = matmul_hadU_cuda(
+                        x.contiguous(),
+                        self.had_K,
+                        self.K,
+                    )
+                    x = x.reshape(original_shape)
             else:
-                x = matmul_hadU_cuda(x, self.had_K, self.K)
+                if self.fp32_had:
+                    x = matmul_hadU_cuda(x.float(), self.had_K, self.K).to(x_dtype)
+                else:
+                    x = matmul_hadU_cuda(x, self.had_K, self.K)
 
         elif self.online_partial_had:
             if self.fp32_had:
@@ -427,6 +468,7 @@ class RotateLinear(nn.Module):
         K,
         had_K,
         had_dim,
+        online_rotate_tp,
     ):
         super().__init__()
         self.register_buffer("weight", weight)
@@ -440,9 +482,16 @@ class RotateLinear(nn.Module):
                 self.register_buffer(name, buf.data)
 
         self.rotater = Rotater(
-            online_full_had, online_partial_had, fp32_had, K, had_K, had_dim
+            online_full_had,
+            online_partial_had,
+            fp32_had,
+            K,
+            had_K,
+            had_dim,
+            online_rotate_tp=online_rotate_tp,
         )
         self.register_buffer("buf_rotate", torch.tensor(True))
+        self.online_rotate_tp = online_rotate_tp
 
     def forward(self, x):
         x = self.rotater.rotate(x)
@@ -453,7 +502,15 @@ class RotateLinear(nn.Module):
     @classmethod
     @torch.no_grad()
     def new(
-        cls, module, online_full_had, online_partial_had, fp32_had, K, had_K, had_dim
+        cls,
+        module,
+        online_full_had,
+        online_partial_had,
+        fp32_had,
+        K,
+        had_K,
+        had_dim,
+        online_rotate_tp,
     ):
         weight = module.weight.data
         if module.bias is not None:
@@ -471,6 +528,7 @@ class RotateLinear(nn.Module):
             K=K,
             had_K=had_K,
             had_dim=had_dim,
+            online_rotate_tp=online_rotate_tp,
         )
 
         new_module.in_features = module.in_features
@@ -975,7 +1033,7 @@ class AutoawqRealQuantLinear(nn.Module):
             order_map = [0, 2, 4, 6, 1, 3, 5, 7]
         else:
             raise NotImplementedError("Only 4-bit are supported for now.")
-            
+
         for col in range(weight.shape[1] // pack_num):
             for i in range(pack_num):
                 int_weight_col = weight[:, col * pack_num + order_map[i]]
@@ -989,7 +1047,6 @@ class AutoawqRealQuantLinear(nn.Module):
             )
 
             for col in range(zeros.shape[1] // pack_num):
-                
                 for i in range(pack_num):
                     intzero_col = zeros[:, col * pack_num + order_map[i]]
                     int_zeros[:, col] |= intzero_col << (i * bit)
