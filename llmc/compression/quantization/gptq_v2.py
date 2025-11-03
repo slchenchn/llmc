@@ -4,14 +4,14 @@ import os
 # No abstract base classes used here
 
 import torch
-import torch.distributed as dist
+import torch.distributed as dist  # noqa: F401
 import torch.nn as nn
 import transformers
 from loguru import logger
 from collections import defaultdict
 import functools
 from llmc.utils.utils import get_decoder_layer_ori_device
-from tqdm import trange
+from tqdm import trange  # noqa: F401
 
 from llmc.utils.loggings import safe_wandb_log
 from llmc.utils.registry_factory import ALGO_REGISTRY
@@ -23,6 +23,10 @@ from .module_utils import (
     FakeQuantLinear,
     RotateLinear,
 )
+
+
+class GPTQv2Error(Exception):
+    pass
 
 
 @ALGO_REGISTRY
@@ -79,8 +83,13 @@ class GPTQv2(BaseBlockwiseQuantization):
         self.eager_transform_dtype = special_config.get("eager_transform_dtype", False)
         self.force_scale_dtype = special_config.get("force_scale_dtype", False)
         self.fp64_layers = special_config.get("fp64_layers", [])
+        try:
+            self.max_allowed_err = float(special_config.get("max_allowed_err", None))
+        except:
+            self.max_allowed_err = None
         logger.info(f"eager_transform_dtype: {self.eager_transform_dtype}")
         logger.info(f"force_scale_dtype: {self.force_scale_dtype}")
+        logger.info(f"max_allowed_err: {self.max_allowed_err}")
 
     def hessian_sorting(self, name):
         H = self.layers_cache[name]["H"]
@@ -142,18 +151,90 @@ class GPTQv2(BaseBlockwiseQuantization):
                 layer, tuple(_LLMC_LINEAR_TYPES_ + _TRANSFORMERS_LINEAR_TYPES_)
             ):
                 continue
+            self.layer_name = name
             self.layer_transform(layer, name)
             self.free(name)
 
     @torch.no_grad()
     def layer_transform(self, layer, name):
+        # DEBUG: Save/Load state for problematic layer
+        resume_idx = 43
+        resume_name = "mlp.down_proj"
+        
+        # Check if we should load from saved state
+        from pathlib import Path
+        dump_dir = Path(f"cache/gptq_v2_resume_layer{resume_idx}_{resume_name}")
+        debug_state_path = dump_dir / "debug_state_full.pt"
+        
+        if self.block_idx == resume_idx and name == resume_name:
+            if debug_state_path.exists():
+                # LOAD MODE: Load saved state for debugging
+                print(f"[DEBUG] Loading state from {debug_state_path}")
+                debug_state = torch.load(debug_state_path, map_location='cuda')
+                
+                # Restore state
+                layer = debug_state['layer'].cuda()
+                self.layers_cache = debug_state['layers_cache']
+                self.groups = debug_state['groups']
+                
+                # Restore config
+                config = debug_state['self_config']
+                self.percdamp = config['percdamp']
+                self.actorder = config['actorder']
+                # self.owq = config['owq']
+                # self.n_out_dict = config['n_out_dict']
+                  
+                print(f"[DEBUG] State loaded successfully. You can now debug with:")
+                print(f"  - layer: {type(layer).__name__}, weight shape: {layer.weight.shape}")
+                print(f"  - H shape: {self.layers_cache[name]['H'].shape}")
+                print(f"  - dXXT shape: {self.layers_cache[name]['dXXT'].shape}")
+                print(f"[DEBUG] Proceeding with layer_transform...")
+            else:
+                # SAVE MODE: Save state for later debugging
+                dump_dir.mkdir(parents=True, exist_ok=True)
+
+                debug_state = {
+                    'layer': layer,  # Complete layer with all weights and buffers
+                    'layer_name': name,
+                    'block_idx': self.block_idx,
+                    'layers_cache': self.layers_cache,  # Contains H and dXXT
+                    # 'groups': self.groups,
+                    'self_config': {  # Key configuration from self
+                        'percdamp': self.percdamp,
+                        'actorder': self.actorder,
+                        # 'owq': self.owq,
+                        # 'n_out_dict': self.n_out_dict,
+                        # 'wquantizer_config': self.wquantizer.__dict__ if hasattr(self.wquantizer, '__dict__') else None,
+                    }
+                }
+                torch.save(debug_state, debug_state_path)
+                print(f"[DEBUG] Saved complete state to {debug_state_path}")
+
         self.initialize_qparams_and_prepare_weights(layer, name)
-        W, Hinv = self.process_hessian_and_weights(layer, name)
-        self.update_layer_with_transformed_weights(layer, W, Hinv, name)
+        percdamp = self.percdamp
+        while percdamp < 1:
+            try:
+                W, Hinv = self.process_hessian_and_weights(layer, name, percdamp)
+                self.update_layer_with_transformed_weights(layer, W, Hinv, name)
+            except GPTQv2Error:
+                percdamp += 1e-2
+                logger.warning(
+                    f"gptq error exceeds 1e8, increasing percdamp to {percdamp}"
+                )
+                continue
+            except Exception as e:
+                raise e
+            break
+        else:
+            raise ValueError(
+                f"gptq error exceeds {self.max_allowed_err}, even with percdamp={percdamp}"
+            )
 
     def get_layer_dtype(self, layer_name: str) -> torch.dtype:
         # Match semantics similar to GPTQv3: substring match on full layer path
-        full_layer_name = f'{self.model.block_name_prefix}.{self.block_idx}.{layer_name}'
+        full_layer_name = (
+            f"{self.model.block_name_prefix}.{self.block_idx}.{layer_name}"
+        )
         for pattern in self.fp64_layers:
             if pattern in full_layer_name:
                 return torch.float64
@@ -168,7 +249,7 @@ class GPTQv2(BaseBlockwiseQuantization):
         if self.actorder or self.owq:
             self.hessian_sorting(name)
 
-    def process_hessian_and_weights(self, layer, name):
+    def process_hessian_and_weights(self, layer, name, percdamp=None):
         W = layer.weight.data.clone()
         if isinstance(layer, nn.Conv2d):
             W = W.flatten(1)
@@ -176,8 +257,8 @@ class GPTQv2(BaseBlockwiseQuantization):
             W = W.t()
 
         W = W.float()
-        H = self.layers_cache[name].pop("H")
-        dXXT = self.layers_cache[name].pop("dXXT")
+        H = self.layers_cache[name]["H"]
+        dXXT = self.layers_cache[name]["dXXT"]
 
         dead = torch.diag(H) == 0
         if dead.sum() > 0:
@@ -214,54 +295,72 @@ class GPTQv2(BaseBlockwiseQuantization):
                     )
 
         # Diagnostics before constructing P
-        try:
-            H_fro = torch.linalg.norm(H, ord="fro").item()
-        except Exception:
-            H_fro = torch.norm(H, p="fro").item()
-        try:
-            dXXT_fro = torch.linalg.norm(dXXT, ord="fro").item()
-        except Exception:
-            dXXT_fro = torch.norm(dXXT, p="fro").item()
-        ratio = dXXT_fro / (H_fro + 1e-12)
-        logger.info(
-            f"[GPTQv2][{name}] pre-P: ||H||_F={H_fro:.4e}, ||dXXT||_F={dXXT_fro:.4e}, ratio={ratio:.2%}"
-        )
-        safe_wandb_log(
-            {
-                f"{name}/preP_H_fro": H_fro,
-                f"{name}/preP_dXXT_fro": dXXT_fro,
-                f"{name}/preP_H_dXXT_ratio": ratio,
-            },
-            step=self.block_idx,
-        )
+        if self.log_diagnostics:
+            try:
+                H_fro = torch.linalg.norm(H, ord="fro").item()
+            except Exception:
+                H_fro = torch.norm(H, p="fro").item()
+            try:
+                dXXT_fro = torch.linalg.norm(dXXT, ord="fro").item()
+            except Exception:
+                dXXT_fro = torch.norm(dXXT, p="fro").item()
+            ratio = dXXT_fro / (H_fro + 1e-12)
+            logger.info(
+                f"[GPTQv2][{name}] pre-P: ||H||_F={H_fro:.4e}, ||dXXT||_F={dXXT_fro:.4e}, ratio={ratio:.2%}"
+            )
+            safe_wandb_log(
+                {
+                    f"{name}/preP_H_fro": H_fro,
+                    f"{name}/preP_dXXT_fro": dXXT_fro,
+                    f"{name}/preP_H_dXXT_ratio": ratio,
+                },
+                step=self.block_idx,
+            )
 
-        damp = self.percdamp * torch.mean(torch.diag(H))
+        if percdamp is None:
+            percdamp = self.percdamp
+        damp = percdamp * torch.mean(torch.diag(H))
         diag = torch.arange(self.columns, device=self.dev)
         H[diag, diag] += damp
         # H condition number
-        try:
-            cond_num = torch.linalg.cond(H).item()
-            logger.info(f'[GPTQv2][{name}] H cond num={cond_num:.4e}')
-            cond_val = cond_num
-        except Exception:
-            logger.info(f'[GPTQv2][{name}] H cond num=inf')
-            cond_val = float("inf")
-        safe_wandb_log({f"{name}/H_cond_num": cond_val}, step=self.block_idx)
+        if self.log_diagnostics:
+            try:
+                cond_num = torch.linalg.cond(H).item()
+                logger.info(f"[GPTQv2][{name}] H cond num={cond_num:.4e}")
+                cond_val = cond_num
+            except Exception:
+                logger.info(f"[GPTQv2][{name}] H cond num=inf")
+                cond_val = float("inf")
+            safe_wandb_log({f"{name}/H_cond_num": cond_val}, step=self.block_idx)
 
         H = torch.linalg.cholesky(H)
         H = torch.cholesky_inverse(H)
         H = torch.linalg.cholesky(H, upper=True)
         Hinv = H
+        Hinv_diag = torch.diag(Hinv)
+        logger.info(
+            f"[GPTQv2][{name}] Hinv diag min={Hinv_diag.min().item():.4e}, mean={Hinv_diag.mean().item():.4e}, max={Hinv_diag.max().item():.4e}"
+        )
+        safe_wandb_log(
+            {
+                f"{name}/Hinv_diag_min": Hinv_diag.min().item(),
+                f"{name}/Hinv_diag_mean": Hinv_diag.mean().item(),
+                f"{name}/Hinv_diag_max": Hinv_diag.max().item(),
+            },
+            step=self.block_idx,
+        )
+
         P = self.v2_alpha * ((dXXT @ Hinv.T).triu(diagonal=1)) @ Hinv
         self.P = P.float()
 
         # Diagnostics after constructing P
-        try:
-            P_fro = torch.linalg.norm(P, ord="fro").item()
-        except Exception:
-            P_fro = torch.norm(P, p="fro").item()
-        logger.info(f"[GPTQv2][{name}] post-P: ||P||_F={P_fro:.4e}")
-        safe_wandb_log({f"{name}/postP_P_fro": P_fro}, step=self.block_idx)
+        if self.log_diagnostics:
+            try:
+                P_fro = torch.linalg.norm(P, ord="fro").item()
+            except Exception:
+                P_fro = torch.norm(P, p="fro").item()
+            logger.info(f"[GPTQv2][{name}] post-P: ||P||_F={P_fro:.4e}")
+            safe_wandb_log({f"{name}/postP_P_fro": P_fro}, step=self.block_idx)
 
         return W, Hinv.float()
 
@@ -279,6 +378,20 @@ class GPTQv2(BaseBlockwiseQuantization):
             },
             step=self.block_idx,
         )
+
+        if self.max_allowed_err and total_error > self.max_allowed_err:
+            from pathlib import Path
+
+            dump_dir = Path("cache/gptq_v2_debug")
+            dump_dir.mkdir(parents=True, exist_ok=True)
+            torch.save(layer.weight.data, dump_dir / f"layer_weight_{name}.pt")
+            torch.save(Hinv, dump_dir / f"Hinv_{name}.pt")
+            torch.save(W, dump_dir / f"W_{name}.pt")
+            torch.save(Losses, dump_dir / f"Losses_{name}.pt")
+            torch.save(tmp, dump_dir / f"tmp_{name}.pt")
+            raise GPTQv2Error(
+                f"gptq error exceeds {self.max_allowed_err}, dumped debug info to {dump_dir}"
+            )
 
         if self.actorder or self.owq:
             tmp[:, self.n_nonout :] = W[:, self.n_nonout :]
@@ -351,14 +464,37 @@ class GPTQv2(BaseBlockwiseQuantization):
                 tmp1[:, i] = q
                 Losses1[:, i] = ((w - q) ** 2) / (2 * d**2)
                 err1 = (w - q) / d
+
+                # DEBUG:
+                if torch.any(Losses1 > 1e6):
+                    from pathlib import Path
+
+                    dump_dir = Path("cache/gptq_v2_debug2")
+                    dump_dir.mkdir(parents=True, exist_ok=True)
+                    torch.save(w, dump_dir / f"w_{i1}_{i2}_{i}.pt")
+                    torch.save(q, dump_dir / f"q_{i1}_{i2}_{i}.pt")
+                    torch.save(d, dump_dir / f"d_{i1}_{i2}_{i}.pt")
+                    torch.save(W1, dump_dir / f"W1_{i1}_{i2}_{i}.pt")
+                    torch.save(Hinv1, dump_dir / f"Hinv1_{i1}_{i2}_{i}.pt")
+                    torch.save(P1, dump_dir / f"P1_{i1}_{i2}_{i}.pt")
+                    torch.save(Losses1, dump_dir / f"Losses1_{i1}_{i2}_{i}.pt")
+                    torch.save(err1, dump_dir / f"err1_{i1}_{i2}_{i}.pt")
+                    torch.save(W, dump_dir / f'W_{i1}_{i2}_{i}.pt')
+                    # raise ValueError("Losses is nan or inf")
+                    logger.warning(f"Losses is exceeds 1e6 at {i1=}, {i2=}, {i=}, {self.block_idx=}, {self.layer_name=}")
+
+
                 W1[:, i:] -= err1.unsqueeze(1).matmul(
                     Hinv1[i, i:].unsqueeze(0)
                 ) - w.unsqueeze(1).matmul(P1[i, i:].unsqueeze(0))
+                # W1[:, i + 1 :] -= err1.unsqueeze(1).matmul(
+                #     Hinv1[i, i + 1 :].unsqueeze(0)
+                # ) - w.unsqueeze(1).matmul(P1[i, i + 1 :].unsqueeze(0))
                 Err1[:, i] = err1
 
-                # DEBUG:
-                if Losses1.isnan().any() or Losses1.isinf().any():
-                    raise ValueError("Losses is nan or inf")
+                # # DEBUG:
+                # if Losses1.isnan().any() or Losses1.isinf().any():
+                #     raise ValueError("Losses is nan or inf")
 
             tmp[:, i1:i2], Losses[:, i1:i2] = tmp1, Losses1
             W[:, i2:] -= Err1.matmul(Hinv[i1:i2, i2:]) - W1.matmul(P[i1:i2, i2:])
@@ -490,12 +626,14 @@ class GPTQv2(BaseBlockwiseQuantization):
         target_dtype = self.get_layer_dtype(name)
 
         for idx, chunk in enumerate(chunks):
-            chunk = math.sqrt(2 / self.layers_cache[name]["nsamples"]) * chunk.to(dtype=target_dtype)
+            chunk = math.sqrt(2 / self.layers_cache[name]["nsamples"]) * chunk.to(
+                dtype=target_dtype
+            )
             self.layers_cache[name]["H"] += chunk.matmul(chunk.t())
 
             fp_chunk = fp_chunks[idx]
-            fp_chunk = (
-                math.sqrt(2 / self.layers_cache[name]["nsamples"]) * fp_chunk.to(dtype=target_dtype)
+            fp_chunk = math.sqrt(2 / self.layers_cache[name]["nsamples"]) * fp_chunk.to(
+                dtype=target_dtype
             )
 
             if (
@@ -746,7 +884,7 @@ class GPTQv2(BaseBlockwiseQuantization):
             if "global_scale" not in self.qparams or "local_scales" not in self.qparams:
                 return False
             return torch.all(self.qparams["global_scale"] > 100) and torch.all(
-                self.qparams["local_scales"] > 0
+                self.qparams["local_scales"].float() > 0
             )
         else:
             if "scale" not in self.qparams:

@@ -179,14 +179,15 @@ class GPTQ(BaseBlockwiseQuantization):
         diag = torch.arange(self.columns, device=self.dev)
         H[diag, diag] += damp
         # H condition number
-        try:
-            cond_num = torch.linalg.cond(H).item()
-            logger.info(f'[GPTQ][{name}] H cond num={cond_num:.4e}')
-            cond_val = cond_num
-        except Exception:
-            logger.info(f'[GPTQ][{name}] H cond num=inf')
-            cond_val = float("inf")
-        safe_wandb_log({f"{name}/H_cond_num": cond_val}, step=self.block_idx)
+        if self.log_diagnostics:
+            try:
+                cond_num = torch.linalg.cond(H).item()
+                logger.info(f'[GPTQ][{name}] H cond num={cond_num:.4e}')
+                cond_val = cond_num
+            except Exception:
+                logger.info(f'[GPTQ][{name}] H cond num=inf')
+                cond_val = float("inf")
+            safe_wandb_log({f"{name}/H_cond_num": cond_val}, step=self.block_idx)
 
         H = torch.linalg.cholesky(H)
         H = torch.cholesky_inverse(H)

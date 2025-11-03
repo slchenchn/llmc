@@ -346,6 +346,8 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
         # set special quant config
         special_config = self.quant_config.get("special", {})
         self.true_sequential = special_config.get("true_sequential", False)
+        self.log_diagnostics = special_config.get("log_diagnostics", False)
+        logger.info(f"log_diagnostics: {self.log_diagnostics}")
 
         # set weight clip config
         self.weight_clip = special_config.get("weight_clip", False)
