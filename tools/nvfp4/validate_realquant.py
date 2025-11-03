@@ -7,24 +7,31 @@ import json
 import argparse
 
 
-def check_shared_scales(state_dict, num_hidden_layers):
+def check_shared_scales(state_dict, num_hidden_layers, require_input_scale):
     print("\n-----------------------------------------------")
     print("start checking shared scales...")
     for layer in trange(num_hidden_layers):
-        for scale_name in ("weight_global_scale", "input_global_scale"):
+        scale_names = ("weight_global_scale",)
+        if require_input_scale:
+            scale_names = scale_names + ("input_global_scale",)
+        for scale_name in scale_names:
             # qkv
             q_scale_key = f"model.layers.{layer}.self_attn.q_proj.{scale_name}"
             q_scale = state_dict[q_scale_key]
             k_scale = state_dict[q_scale_key.replace("q_proj", "k_proj")]
             v_scale = state_dict[q_scale_key.replace("q_proj", "v_proj")]
-            assert q_scale == k_scale == v_scale
+            assert q_scale == k_scale == v_scale, (
+                f"q_scale ({q_scale}) != k_scale ({k_scale}) != v_scale ({v_scale})"
+            )
             # print(f"{q_scale_key} is the same")
 
             # up/gate
             up_scale_key = f"model.layers.{layer}.mlp.up_proj.{scale_name}"
             up_scale = state_dict[up_scale_key]
             gate_scale = state_dict[up_scale_key.replace("up_proj", "gate_proj")]
-            assert up_scale == gate_scale
+            assert up_scale == gate_scale, (
+                f"up_scale ({up_scale}) != gate_scale ({gate_scale})"
+            )
             # print(f"{up_scale_key} is the same")
 
     print("check shared scales done")
@@ -106,6 +113,52 @@ def check_quant_group_completeness(state_dict, require_input_global_scale):
     print("check quant group completeness done")
 
 
+def print_scale_statistics(state_dict, require_input_global_scale):
+    print("\n-----------------------------------------------")
+    print("start printing scale statistics...")
+
+    # Collect all weight_global_scale values
+    weight_scales = []
+    for name, value in state_dict.items():
+        if name.endswith("weight_global_scale"):
+            # Handle both scalar and tensor cases
+            if value.numel() == 1:
+                weight_scales.append(value.item())
+            else:
+                weight_scales.extend(value.flatten().tolist())
+
+    if weight_scales:
+        weight_tensor = torch.tensor(weight_scales)
+        print("\nweight_global_scale statistics:")
+        print(f"  Max: {weight_tensor.max().item():.6f}")
+        print(f"  Min: {weight_tensor.min().item():.6f}")
+        print(f"  Mean: {weight_tensor.mean().item():.6f}")
+        print(f"  Std: {weight_tensor.std().item():.6f}")
+        print(f"  Count: {len(weight_scales)}")
+
+    # Collect all input_global_scale values if required
+    if require_input_global_scale:
+        input_scales = []
+        for name, value in state_dict.items():
+            if name.endswith("input_global_scale"):
+                # Handle both scalar and tensor cases
+                if value.numel() == 1:
+                    input_scales.append(value.item())
+                else:
+                    input_scales.extend(value.flatten().tolist())
+
+        if input_scales:
+            input_tensor = torch.tensor(input_scales)
+            print("\ninput_global_scale statistics:")
+            print(f"  Max: {input_tensor.max().item():.6f}")
+            print(f"  Min: {input_tensor.min().item():.6f}")
+            print(f"  Mean: {input_tensor.mean().item():.6f}")
+            print(f"  Std: {input_tensor.std().item():.6f}")
+            print(f"  Count: {len(input_scales)}")
+
+    print("scale statistics printed")
+
+
 def _should_require_input_global_scale(model_dir: Path) -> bool:
     cfg_path = model_dir / "config.json"
 
@@ -132,10 +185,13 @@ if __name__ == "__main__":
         state_dict.update(load_file(safetensor, device="cpu"))
 
     cfg = AutoConfig.from_pretrained(model_dir)
-    check_shared_scales(state_dict, cfg.num_hidden_layers)
     require_input_scale = _should_require_input_global_scale(model_dir)
+    check_shared_scales(state_dict, cfg.num_hidden_layers, require_input_scale)
     check_quant_group_completeness(state_dict, require_input_scale)
     check_dtype(state_dict)
     # for layer in trange(cfg.num_hidden_layers):
+
+    # Print scale statistics after all checks pass
+    print_scale_statistics(state_dict, require_input_scale)
 
     print("\nAll check done")

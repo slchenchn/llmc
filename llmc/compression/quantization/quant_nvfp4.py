@@ -48,7 +48,9 @@ class FP4_E2M1_DATA:
 
 
 class NVFP4Quantizer(BaseQuantizer):
-    def __init__(self, bit, symmetric, granularity, arbitrary_group_size=False, **kwargs):
+    def __init__(
+        self, bit, symmetric, granularity, arbitrary_group_size=False, **kwargs
+    ):
         super().__init__(bit, symmetric, granularity, **kwargs)
         self.quant_type = "nvfp4-quant"
         assert symmetric, "NVFP4 is always symmetric"
@@ -69,10 +71,9 @@ class NVFP4Quantizer(BaseQuantizer):
         assert self.granularity == "per_group", (
             "NVFP4Quantizer only supports per_group granularity"
         )
-        assert arbitrary_group_size or self.group_size == 16, "NVFP4Quantizer only supports group_size=16"
-
-    def get_mse_range(self, tensor, norm=2.4, bs=256):
-        raise NotImplementedError
+        assert arbitrary_group_size or self.group_size == 16, (
+            "NVFP4Quantizer only supports group_size=16"
+        )
 
     @staticmethod
     def get_global_scale(global_absmax):
@@ -101,15 +102,69 @@ class NVFP4Quantizer(BaseQuantizer):
             global_scale = cur_global_scale
         else:
             assert cur_global_scale >= global_scale, (
-                "cur_global_scale is less than global_scale"
+                f"cur_global_scale={cur_global_scale} is less than global_scale={global_scale}"
             )
         if min_global_scale is not None:
             assert global_scale >= min_global_scale, (
-                "global_scale is less than min_global_scale"
+                f"global_scale={global_scale} is less than min_global_scale={min_global_scale}"
             )
         local_scales = self.get_local_scales(global_scale, absmax).to(device)
 
         return global_scale, local_scales, self.qmax, self.qmin
+
+    @torch.no_grad()
+    def get_mse_range(self, tensor, norm=2.4, bs=256, global_scale=None):
+        assert self.mse_b_num >= 1 and tensor.shape[0] % self.mse_b_num == 0, (
+            "Batch number must be divisible by tensor.shape[0],"
+        )
+        bs = tensor.shape[0] // self.mse_b_num
+        tensor = tensor.float()
+        min_val, max_val = self.get_minmax_range(tensor)
+
+        dev = tensor.device
+
+        for b_num in range(self.mse_b_num):
+            _tensor = tensor[b_num * bs : (b_num + 1) * bs, :]
+            _min_val, _max_val = (
+                min_val[b_num * bs : (b_num + 1) * bs, :],
+                max_val[b_num * bs : (b_num + 1) * bs, :],
+            )
+
+            best = torch.full([_tensor.shape[0]], float("inf"), device=dev)
+            best_p = torch.full([_tensor.shape[0]], float("inf"), device=dev)
+
+            best_min_val, best_max_val = _min_val, _max_val
+
+            for i in range(int(self.maxshrink * self.mse_grid)):
+                p = 1 - i / self.mse_grid
+
+                xmin = p * _min_val
+                xmax = p * _max_val
+
+                global_scale, local_scales, qmax, qmin = self.get_qparams(
+                    (xmin, xmax),
+                    dev,
+                    global_scale=global_scale,
+                )
+                q_tensor = self.quant_dequant(
+                    _tensor, global_scale, local_scales, qmax, qmin
+                )
+
+                err = (q_tensor - _tensor).abs().pow(norm).sum(1)
+                tmp = err < best
+
+                if torch.any(tmp):
+                    best[tmp] = err[tmp]
+                    best_min_val[tmp] = xmin[tmp]
+                    best_max_val[tmp] = xmax[tmp]
+                    best_p[tmp] = p
+
+            (
+                min_val[b_num * bs : (b_num + 1) * bs, :],
+                max_val[b_num * bs : (b_num + 1) * bs, :],
+            ) = (best_min_val, best_max_val)
+
+        return (min_val, max_val)
 
     def get_tensor_qparams(self, tensor, args={}, min_global_scale=None):
         """Get quantization parameters for NVFP4"""
@@ -126,6 +181,18 @@ class NVFP4Quantizer(BaseQuantizer):
             min_global_scale=min_global_scale,
         )
         return tensor, global_scale, local_scales, qmax, qmin
+
+    def get_tensor_range(self, tensor, args={}):
+        if self.calib_algo == "minmax":
+            return self.get_minmax_range(tensor)
+        elif self.calib_algo == "mse":
+            return self.get_mse_range(
+                tensor, global_scale=args.get("global_scale", None)
+            )
+        elif self.calib_algo == "learnable":
+            return self.get_learnable_range(tensor, **args)
+        else:
+            return self.get_minmax_range(tensor)
 
     def get_batch_tensors_qparams(self, act_tensors, alpha=0.01, args={}):
         if self.calib_algo == "static_hist":
@@ -257,7 +324,9 @@ class NVFP4Quantizer(BaseQuantizer):
 
         local_scales = local_scales.float() * output_scale_factor
         local_scales = FP8_E4M3_DATA.cast_to_positive_fp8(local_scales)
-        local_scales = local_scales.view(org_w_shape[0], org_w_shape[1] // self.group_size)
+        local_scales = local_scales.view(
+            org_w_shape[0], org_w_shape[1] // self.group_size
+        )
 
         assert len(weight.unique()) <= 15
         assert global_scale.dtype == torch.float32
@@ -284,14 +353,16 @@ class NVFP4Quantizer(BaseQuantizer):
 
         # Get per-tensor/per-group params and quantize to NVFP4 codes
         weight, global_scale, local_scales, qmax, qmin = self.get_tensor_qparams(
-            weight, args, min_global_scale=100
+            weight, args, min_global_scale=10
         )
         weight = self.quant(weight, global_scale, local_scales, qmax, qmin)
         weight = self.restore_tensor(weight, org_w_shape)
 
         local_scales = local_scales.float() * output_scale_factor
         local_scales = FP8_E4M3_DATA.cast_to_positive_fp8(local_scales)
-        local_scales = local_scales.view(org_w_shape[0], org_w_shape[1] // self.group_size)
+        local_scales = local_scales.view(
+            org_w_shape[0], org_w_shape[1] // self.group_size
+        )
 
         assert len(weight.unique()) <= 15
         assert global_scale.dtype == torch.float32
@@ -344,7 +415,9 @@ class NVFP4Quantizer(BaseQuantizer):
         act = self.quant(act, global_scale, local_scales, qmax, qmin)
         act = self.restore_tensor(act, org_act_shape)
 
-        local_scales = local_scales.view(*org_act_shape[:-1], org_act_shape[-1] // self.group_size)
+        local_scales = local_scales.view(
+            *org_act_shape[:-1], org_act_shape[-1] // self.group_size
+        )
 
         assert len(act.unique()) <= 15
         assert global_scale.dtype == torch.float32
