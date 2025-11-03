@@ -1,0 +1,36 @@
+base:
+    seed: &seed 42
+model:
+    type: Qwen2
+    path: /nfs/FM/chenshuailin/checkpoints/Qwen/Qwen2.5-3B-Instruct/
+    tokenizer_mode: fast
+    torch_dtype: torch.bfloat16
+calib:
+    name: pileval
+    download: False
+    path: data/pileval
+    n_samples: 256
+    bs: 1
+    seq_len: 4096
+    preproc: txt_general_preproc
+    seed: *seed
+quant:
+    method: SmoothQuant
+    weight:
+        bit: 4
+        symmetric: True
+        granularity: per_channel
+    act:
+        bit: 8
+        symmetric: True
+        granularity: per_token
+    special:
+        alpha: 0.6
+save:
+    # save_vllm_nvfp4: True
+    save_vllm: True
+    save_trans: True
+    # save_fake: True
+    save_path: checkpoints/Qwen2.5-3B-Instruct/smoothqunat/pileval_n256_s4k_a0.6_sym_w4a8
+dispatch:
+    num_gpus: 1

@@ -1,0 +1,42 @@
+base:
+    seed: &seed 42
+model:
+    type: Qwen2
+    path: /nfs/FM/chenshuailin/checkpoints/Qwen/Qwen2.5-3B-Instruct/
+    tokenizer_mode: fast
+    torch_dtype: torch.bfloat16
+calib:
+    name: wikitext2
+    preproc: wikitext2_gptq
+    path: data/wikitext2
+    download: False
+    n_samples: 128
+    bs: 1
+    seq_len: 2048
+    seed: *seed
+quant:
+    method: GPTQv2
+    weight:
+        bit: 4
+        symmetric: True
+        granularity: per_group
+        group_size: 16
+        # pack_version: gemm_pack
+    special:
+        actorder: True
+        static_groups: True
+        percdamp: 0.05
+        blocksize: 128
+        chunk_num: 1
+        true_sequential: True
+        online_rotate: False
+        fp32_had: True
+    quant_out: True
+save:
+    save_fake: True
+    # save_vllm: True
+    # save_autoawq: True
+    # save_vllm_nvfp4: True
+    save_path: checkpoints/Qwen2.5-3B-Instruct/gptqv2/sym_w4a16g16
+dispatch:
+    num_gpus: 1

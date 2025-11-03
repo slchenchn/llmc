@@ -8,17 +8,15 @@ model:
 quant:
     method: RTN
     weight:
-        quant_type: nvfp4
         bit: 4
         symmetric: True
         granularity: per_group
         group_size: 16
-        share_global_scale: True
+        # pack_version: gemm_pack
 save:
-    # save_fake: True
+    save_fake: True
     # save_vllm: True
     # save_autoawq: True
-    save_vllm_nvfp4: True
-    save_path: checkpoints/Qwen2.5-3B-Instruct/RTN/nvfp4_w4a16_sgs
+    save_path: checkpoints/Qwen2.5-3B-Instruct/RTN/sym_w4a16g16
 dispatch:
     num_gpus: 1

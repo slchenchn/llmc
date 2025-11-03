@@ -1,0 +1,22 @@
+base:
+    seed: &seed 42
+model:
+    type: Qwen2
+    path: checkpoints/Qwen2.5-3B-Instruct/quarot/nvfp4_w4a16_sgs/transformed_model
+    tokenizer_mode: fast
+    torch_dtype: torch.bfloat16
+quant:
+    method: RTN
+    weight:
+        bit: 4
+        symmetric: True
+        granularity: per_group
+        group_size: 16
+        # pack_version: gemm_pack
+save:
+    save_fake: True
+    # save_vllm: True
+    # save_autoawq: True
+    save_path: checkpoints/Qwen2.5-3B-Instruct/RTN/quarot_rtn_sym_w4a16g16
+dispatch:
+    num_gpus: 1

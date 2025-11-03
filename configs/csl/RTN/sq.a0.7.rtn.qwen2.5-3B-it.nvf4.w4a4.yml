@@ -1,8 +1,9 @@
 base:
     seed: &seed 42
 model:
-    type: Llama
-    path: /nfs/FM/chenshuailin/checkpoints/LLM-Research/Meta-Llama-3___1-8B-Instruct
+    type: Qwen2
+    path: checkpoints/Qwen2.5-3B-Instruct/smoothqunat/pileval_n256_s4k_a0.7_sym_w4a8/transformed_model
+    tokenizer_mode: fast
     torch_dtype: torch.bfloat16
 calib:
     name: wikitext2
@@ -22,6 +23,7 @@ quant:
         granularity: per_group
         group_size: 16
         share_global_scale: True
+        calib_algo: minmax
     act:
         quant_type: nvfp4
         bit: 4
@@ -49,7 +51,6 @@ save:
     # save_vllm: True
     # save_autoawq: True
     save_vllm_nvfp4: True
-    save_path: checkpoints/llama3.1-8B-it/RTN/nvfp4_w4a4_sgs_debug
+    save_path: checkpoints/Qwen2.5-3B-Instruct/RTN/sq_a0.7_rtn_nvf4_w4a4_sgs
 dispatch:
-    num_gpus: 3
-    first_gpu_extra_margin: 0.2
+    num_gpus: 1
