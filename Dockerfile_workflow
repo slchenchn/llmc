@@ -9,5 +9,6 @@ RUN cd third_party/fast-hadamard-transform-workflow && python3 -m pip install -e
 RUN chmod +x main_workflow.py
 
 RUN python3 -m pip install intellif-aihub natsort
+RUN python3 -m pip install datasets==3.6.0
 
 ENTRYPOINT ["python3", "-u", "main_workflow.py"]
