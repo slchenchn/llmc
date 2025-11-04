@@ -37,6 +37,10 @@ def main():
         src_yml_path = Path(
             "configs/csl/workflow/ostquant_gptqv2_qwen3_sym_w4a8_force_dtype_fp16_rotate_tp16.yml"
         )
+    elif "rotate_tp16_ultrachat" in args.output_dir:
+        src_yml_path = Path(
+            "configs/csl/workflow/ostquant_gptqv2_qwen3_sym_w4a8_force_dtype_fp16_rotate_tp16_ultrachat.yml"
+        )
     else:
         src_yml_path = Path(
             "configs/csl/workflow/ostquant_gptqv2_qwen3_sym_w4a8_force_dtype_fp16.yml"
