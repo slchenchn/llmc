@@ -33,13 +33,13 @@ def get_config(args, src_yml_path, dst_yml_path):
 
 def main():
     args = parse_args()
-    if "rotate_tp16" in args.output_dir:
-        src_yml_path = Path(
-            "configs/csl/workflow/ostquant_gptqv2_qwen3_sym_w4a8_force_dtype_fp16_rotate_tp16.yml"
-        )
-    elif "rotate_tp16_ultrachat" in args.output_dir:
+    if "rotate_tp16_ultrachat" in args.output_dir:
         src_yml_path = Path(
             "configs/csl/workflow/ostquant_gptqv2_qwen3_sym_w4a8_force_dtype_fp16_rotate_tp16_ultrachat.yml"
+        )
+    elif "rotate_tp16" in args.output_dir:
+        src_yml_path = Path(
+            "configs/csl/workflow/ostquant_gptqv2_qwen3_sym_w4a8_force_dtype_fp16_rotate_tp16.yml"
         )
     else:
         src_yml_path = Path(
