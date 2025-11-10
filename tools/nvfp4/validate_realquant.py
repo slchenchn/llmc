@@ -42,11 +42,11 @@ def check_dtype(state_dict):
     print("start checking dtype...")
     for name, weight in state_dict.items():
         if "embed" in name or "head" in name or "norm" in name:
-            print(f"{name}: {weight.dtype}")
+            # print(f"{name}: {weight.dtype}")
             continue
 
         if ".bias" in name:
-            print(f"{name}: {weight.dtype}")
+            # print(f"{name}: {weight.dtype}")
             continue
 
         if "weight_packed" in name:  # packed nvfp4
@@ -136,6 +136,25 @@ def print_scale_statistics(state_dict, require_input_global_scale):
         print(f"  Std: {weight_tensor.std().item():.6f}")
         print(f"  Count: {len(weight_scales)}")
 
+    # Collect all weight_scale (local_scale) values
+    local_scales = []
+    for name, value in state_dict.items():
+        if name.endswith("weight_scale"):
+            # Handle both scalar and tensor cases
+            if value.numel() == 1:
+                local_scales.append(value.float().item())
+            else:
+                local_scales.extend(value.float().flatten().tolist())
+
+    if local_scales:
+        local_tensor = torch.tensor(local_scales)
+        print("\nlocal_scale (weight_scale) statistics:")
+        print(f"  Max: {local_tensor.max().item():.6f}")
+        print(f"  Min: {local_tensor.min().item():.6f}")
+        print(f"  Mean: {local_tensor.mean().item():.6f}")
+        print(f"  Std: {local_tensor.std().item():.6f}")
+        print(f"  Count: {len(local_scales)}")
+
     # Collect all input_global_scale values if required
     if require_input_global_scale:
         input_scales = []
@@ -172,7 +191,7 @@ def _should_require_input_global_scale(model_dir: Path) -> bool:
 
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model_dir", type=str, required=True)
+    parser.add_argument("model_dir", type=str)
     return parser.parse_args()
 
 

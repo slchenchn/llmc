@@ -8,7 +8,7 @@ class FP8_E4M3_DATA:
     bits = 8
     max = torch.finfo(torch.float8_e4m3fn).max
     min = torch.finfo(torch.float8_e4m3fn).min
-    min_positive = 0.125
+    min_positive = torch.finfo(torch.float8_e4m3fn).smallest_normal
     dtype = torch.float8_e4m3fn
 
     @staticmethod

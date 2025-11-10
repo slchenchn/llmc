@@ -16,6 +16,7 @@ class SmoothQuant(BaseBlockwiseQuantization):
         super().__init__(model, quant_config, input, padding_mask, config)
         special_config = self.quant_config.get("special", {})
         self.alpha = special_config.get("alpha", 0.5)
+        self.dev = torch.device("cuda")
 
     @torch.no_grad()
     def filter_subset(self, prev_op):
@@ -74,7 +75,19 @@ class SmoothQuant(BaseBlockwiseQuantization):
             return
         layers = list(layers_dict.values())
         scale = self.search_scale_subset(layers, input_feat[input_name])
-        logger.info(f'SmoothQuant {subset["input"][0]} scale: max: {scale.max()}, min: {scale.min()}, mean: {scale.mean()}')
+        logger.info(
+            f"SmoothQuant {subset['input'][0]} scale: max: {scale.max()}, min: {scale.min()}, mean: {scale.mean()}"
+        )
         self.apply_scale(scale, prev_op, layers)
         if self.act_static:
             self.update_input_feat(scale, input_feat, layers_dict, False)
+
+    @torch.no_grad()
+    def block_opt(self, block, *opt_kwargs):
+        weight_cfg = self.quant_config.weight
+        if getattr(weight_cfg, "quant_type", None) == "nvfp4" and getattr(
+            weight_cfg, "share_global_scale", False
+        ):
+            self.collect_block_qparams(block)
+
+        super().block_opt(block, *opt_kwargs)
