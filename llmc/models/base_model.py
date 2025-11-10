@@ -554,8 +554,8 @@ class BaseModel(metaclass=ABCMeta):
                 )
             else:
                 params_tmp_dict = params_dict
-            if not params_tmp_dict:
-                continue
+            # if not params_tmp_dict:
+            #     continue
             if "quant_config" in params_dict:
                 params_tmp_dict["quant_config"] = params_dict["quant_config"]
             M = module.new(m, **params_tmp_dict)

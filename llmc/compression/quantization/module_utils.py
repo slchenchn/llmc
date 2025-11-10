@@ -492,6 +492,8 @@ class RotateLinear(nn.Module):
         )
         self.register_buffer("buf_rotate", torch.tensor(True))
         self.online_rotate_tp = online_rotate_tp
+        logger.info(f"RotateLinear: online_rotate_tp: {online_rotate_tp}")
+        
 
     def forward(self, x):
         x = self.rotater.rotate(x)
