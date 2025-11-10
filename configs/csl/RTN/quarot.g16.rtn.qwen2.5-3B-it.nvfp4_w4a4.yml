@@ -2,7 +2,7 @@ base:
     seed: &seed 42
 model:
     type: Qwen2
-    path: checkpoints/Qwen2.5-3B-Instruct/smoothqunat/pileval_n256_s4k_a0.6_sym_w4a8/transformed_model
+    path: checkpoints/Qwen2.5-3B-Instruct/quarot/group_rotate_g16/transformed_model
     tokenizer_mode: fast
     torch_dtype: torch.bfloat16
 calib:
@@ -23,7 +23,6 @@ quant:
         granularity: per_group
         group_size: 16
         share_global_scale: True
-        calib_algo: minmax
     act:
         quant_type: nvfp4
         bit: 4
@@ -51,6 +50,7 @@ save:
     # save_vllm: True
     # save_autoawq: True
     save_vllm_nvfp4: True
-    save_path: checkpoints/Qwen2.5-3B-Instruct/RTN/sq_a0.6_rtn_nvf4_w4a4_sgs
+    save_path: checkpoints/Qwen2.5-3B-Instruct/RTN/quarot_g16_rtn_nvfp4_w4a4_sgs_fix_local_scale
 dispatch:
     num_gpus: 1
+    first_gpu_extra_margin: 0.0

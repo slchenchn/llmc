@@ -36,3 +36,4 @@ save:
     save_path: checkpoints/Qwen2.5-3B-Instruct/quarot/group_rotate_g16
 dispatch:
     num_gpus: 1
+    first_gpu_extra_margin: 0.0

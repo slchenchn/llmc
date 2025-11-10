@@ -2,7 +2,7 @@ base:
     seed: &seed 42
 model:
     type: Qwen2
-    path: /nfs/FM/chenshuailin/checkpoints/Qwen/Qwen2.5-3B-Instruct/
+    path: /nfs/FM/chenshuailin/workflow/workflow_export/quant_ostquant/output/qwen2.5-3B-it.kltop.nvfp4.w4a4.no-qk-smooth.seq2k/before_gptq
     torch_dtype: torch.bfloat16
 calib:
     name: wikitext2
@@ -22,7 +22,7 @@ quant:
         granularity: per_group
         group_size: 16
         share_global_scale: True
-        # calib_algo: mse
+        calib_algo: mse
     act:
         quant_type: nvfp4
         bit: 4
@@ -39,9 +39,10 @@ quant:
         blocksize: 128
         chunk_num: 1
         true_sequential: True
-        online_rotate: False
+        online_rotate: True
         fp32_had: True
-        # online_rotate_exclude: ["o_proj"]
+        online_rotate_exclude: ["o_proj"]
+        online_rotate_tp: 688
         eager_transform_dtype: False
         force_scale_dtype: False
     quant_out: True
@@ -50,6 +51,6 @@ save:
     # save_vllm: True
     # save_autoawq: True
     save_vllm_nvfp4: True
-    save_path: checkpoints/Qwen2.5-3B-Instruct/gptqv3/nvfp4_w4a4_sgs
+    save_path: checkpoints/Qwen2.5-3B-Instruct/gptqv3/ostq_g16_gptqv3_nvfp4_w4a4_mse_sgs_fix_local_scale
 dispatch:
     num_gpus: 1

@@ -2,7 +2,8 @@ base:
     seed: &seed 42
 model:
     type: Qwen2
-    path: /nfs/FM/chenshuailin/checkpoints/Qwen/Qwen2.5-3B-Instruct/
+    path: checkpoints/Qwen2.5-3B-Instruct/smoothqunat/pileval_n256_s4k_a0.5_sym_w4a8/transformed_model
+    tokenizer_mode: fast
     torch_dtype: torch.bfloat16
 calib:
     name: wikitext2
@@ -14,7 +15,7 @@ calib:
     seq_len: 2048
     seed: *seed
 quant:
-    method: GPTQv2
+    method: RTN
     weight:
         quant_type: nvfp4
         bit: 4
@@ -33,23 +34,24 @@ quant:
         calib_algo: static_minmax
         static: True
     special:
-        actorder: True
-        static_groups: True
-        percdamp: 0.05
-        blocksize: 128
-        chunk_num: 1
+        # actorder: True
+        # static_groups: True
+        # percdamp: 0.05
+        # blocksize: 128
+        # chunk_num: 1
         true_sequential: True
-        online_rotate: False
-        fp32_had: True
+        # online_rotate: True
+        # fp32_had: False
         # online_rotate_exclude: ["o_proj"]
-        eager_transform_dtype: False
-        force_scale_dtype: False
+        # eager_transform_dtype: True
+        # force_scale_dtype: True
     quant_out: True
 save:
     # save_fake: True
     # save_vllm: True
     # save_autoawq: True
     save_vllm_nvfp4: True
-    save_path: checkpoints/Qwen2.5-3B-Instruct/gptqv2/nvfp4_w4a4_mse_sgs_fix_local_scale
+    save_path: checkpoints/Qwen2.5-3B-Instruct/RTN/sq_a0.5_rtn_nvf4_w4a4_mse_sgs_fix_local_scale
 dispatch:
     num_gpus: 1
+    first_gpu_extra_margin: 0.0

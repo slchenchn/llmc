@@ -51,6 +51,6 @@ save:
     # save_vllm: True
     # save_autoawq: True
     save_vllm_nvfp4: True
-    save_path: checkpoints/Qwen2.5-3B-Instruct/RTN/nvf4_w4a4_mse_sgs
+    save_path: checkpoints/Qwen2.5-3B-Instruct/RTN/nvf4_w4a4_mse_sgs_fix_local_scale
 dispatch:
     num_gpus: 1
