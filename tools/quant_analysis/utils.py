@@ -159,6 +159,9 @@ def block_forward(block, input_data, input_kwargs):
             input_kwargs[i]["attention_mask"] = input_kwargs[i]["attention_mask"].cuda()
         with torch.no_grad():
             out = block(input_data[i], **input_kwargs[i])
+            if isinstance(out, tuple):
+                assert len(out) == 1
+                out = out[0]
             if out.ndim == 4:
                 out = out[0]
             output.append(out)
@@ -220,6 +223,7 @@ def get_model_config(args, model_path):
                 "path": model_path,
                 "torch_dtype": args.torch_dtype,
                 "tokenizer_mode": args.tokenizer_mode,
+                "use_cache": False
             }
         }
     )

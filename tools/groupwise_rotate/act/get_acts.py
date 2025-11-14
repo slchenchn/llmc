@@ -36,13 +36,19 @@ def wikitext2_gptq(calib_dataset, tokenizer, n_samples, seq_len, prefix_token_id
     return samples
 
 
-def get_down_proj_activations(model_path, data_dir, save_dir, layer_suffix="down_proj"):
+def get_down_proj_activations(
+    model_path, data_dir, save_dir, layer_suffix="down_proj", batch_size=16
+):
     """Get input activations for all layers ending with layer_suffix"""
 
     # Load model and tokenizer
     print(f"Loading model from {model_path}")
     model = AutoModelForCausalLM.from_pretrained(
-        model_path, device_map="cuda:0", torch_dtype=torch.bfloat16
+        model_path,
+        device_map="auto",
+        torch_dtype=torch.bfloat16,
+        low_cpu_mem_usage=True,
+        use_cache=False
     )
     tokenizer = AutoTokenizer.from_pretrained(model_path)
 
@@ -65,12 +71,12 @@ def get_down_proj_activations(model_path, data_dir, save_dir, layer_suffix="down
 
     # Prepare input data
     data = load_from_disk(data_dir)
-    inputs = wikitext2_gptq(data, tokenizer, 32, 2048)
+    inputs = wikitext2_gptq(data, tokenizer, batch_size, 2048)
 
     # Run forward pass
     with torch.no_grad():
         for cur_inp in tqdm(inputs):
-            outputs = model(cur_inp.to(model.device))
+            outputs = model(cur_inp.to(model.device), use_cache=False)
 
     # Save activations
     print(f"Saving activations to {save_dir}")
@@ -89,10 +95,16 @@ def get_down_proj_activations(model_path, data_dir, save_dir, layer_suffix="down
 
 
 if __name__ == "__main__":
-    model_path = "/nfs/FM/chenshuailin/checkpoints/Qwen/Qwen2.5-3B-Instruct/"
+    # model_path = "/nfs/FM/chenshuailin/checkpoints/Qwen/Qwen2.5-3B-Instruct/"
+    # model_path = "/nfs/FM/chenshuailin/checkpoints/Qwen/Qwen3-32B"
+    # save_dir = "figs/group_rotate/qwen3-32b/act/picked"
+
+    model_path = "/nfs/FM/checkpoints/DeepSeek-R1-BF16"
+    save_dir = "figs/group_rotate/DeepSeek-R1/act/picked"
+
     data_dir = "data/wikitext2"
-    save_dir = "figs/group_rotate/act/picked"
-    layer_suffix = "q_proj"
+    layer_suffix = "down_proj"
+    batch_size = 16
 
     save_dir = save_dir + f"/{layer_suffix}"
-    get_down_proj_activations(model_path, data_dir, save_dir, layer_suffix)
+    get_down_proj_activations(model_path, data_dir, save_dir, layer_suffix, batch_size)

@@ -8,8 +8,8 @@ Outputs:
 - Across-blocks plots for absolute and relative errors including mean, max, and min curves
 """
 
-import re
 import csv
+import sys
 from collections import defaultdict
 from pathlib import Path
 
@@ -19,20 +19,15 @@ import torch
 import torch.nn.functional as F
 from natsort import natsorted
 from tqdm import tqdm
-from utils import HadamardTransform, NVFP4Quantizer
 
-
-def extract_layer_idx(filename: str) -> int:
-    """Extract layer index from activation filename.
-
-    Supports patterns like: model_layers_{idx}_mlp_{name}_input.pt
-    Fallback: first number in the filename.
-    """
-    match = re.search(r"model_layers_(\d+)_mlp_", filename)
-    if match:
-        return int(match.group(1))
-    match = re.search(r"(\d+)", filename)
-    return int(match.group(1)) if match else 0
+sys.path.append("/nfs/FM/chenshuailin/code/llmc/tools/groupwise_rotate")
+from utils import (
+    HadamardTransform,
+    NVFP4Quantizer,
+    extract_layer_index,
+    group_activation_files,
+    load_and_concat_activations,
+)
 
 
 def create_quantizer_and_rotater(group_size, hidden_size: int | None = None):
@@ -61,7 +56,9 @@ def create_quantizer_and_rotater(group_size, hidden_size: int | None = None):
     return quantizers, rotater
 
 
-def compute_relative_error(qdq: torch.Tensor, x: torch.Tensor, eps: float = 1e-16) -> torch.Tensor:
+def compute_relative_error(
+    qdq: torch.Tensor, x: torch.Tensor, eps: float = 1e-16
+) -> torch.Tensor:
     """Compute element-wise relative error abs(qdq - x) / (abs(x) + eps)."""
     return (qdq - x).abs() / (x.abs() + eps)
 
@@ -107,21 +104,31 @@ def load_all_errors_from_csv(csv_path: Path):
     for gs, key_to_map in temp_abs.items():
         all_errors_abs[gs] = {}
         for key, li_to_val in key_to_map.items():
-            all_errors_abs[gs][key] = [li_to_val.get(li, 0.0) for li in layer_indices_sorted]
+            all_errors_abs[gs][key] = [
+                li_to_val.get(li, 0.0) for li in layer_indices_sorted
+            ]
 
     all_errors_rel = {}
     for gs, key_to_map in temp_rel.items():
         all_errors_rel[gs] = {}
         for key, li_to_val in key_to_map.items():
-            all_errors_rel[gs][key] = [li_to_val.get(li, 0.0) for li in layer_indices_sorted]
+            all_errors_rel[gs][key] = [
+                li_to_val.get(li, 0.0) for li in layer_indices_sorted
+            ]
 
-    numeric_group_sizes = sorted([gs for gs in group_sizes_found if isinstance(gs, int)])
-    group_sizes = numeric_group_sizes + (["channelwise"] if "channelwise" in group_sizes_found else [])
+    numeric_group_sizes = sorted(
+        [gs for gs in group_sizes_found if isinstance(gs, int)]
+    )
+    group_sizes = numeric_group_sizes + (
+        ["channelwise"] if "channelwise" in group_sizes_found else []
+    )
 
     return all_errors_abs, all_errors_rel, group_sizes, layer_indices_sorted
 
 
-def plot_single_file_abs_errors(file_errors: dict, save_fig_path: Path, nbins: int = 500) -> None:
+def plot_single_file_abs_errors(
+    file_errors: dict, save_fig_path: Path, nbins: int = 500
+) -> None:
     """Plot per-file absolute error distributions (1x3: max/min/mean)."""
     save_fig_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -131,7 +138,9 @@ def plot_single_file_abs_errors(file_errors: dict, save_fig_path: Path, nbins: i
     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
     act_type = act_types[0] if act_types else "Unknown"
     fig.suptitle(
-        f"NVFP4 {act_type} Quantization Errors - {save_fig_path.stem}", fontsize=16, fontweight="bold"
+        f"NVFP4 {act_type} Quantization Errors - {save_fig_path.stem}",
+        fontsize=16,
+        fontweight="bold",
     )
 
     for act_type in act_types:
@@ -139,7 +148,9 @@ def plot_single_file_abs_errors(file_errors: dict, save_fig_path: Path, nbins: i
         for k, metric in enumerate(metrics):
             ax = axes[k]
             # Ensure strictly positive for log scale
-            assert torch.all(error_stats[metric] > 0), "Absolute error must be strictly positive for log scale"
+            assert torch.all(error_stats[metric] > 0), (
+                "Absolute error must be strictly positive for log scale"
+            )
             error_tensor = error_stats[metric].cpu().flatten().numpy()
 
             log_min = np.log10(error_tensor.min())
@@ -147,7 +158,12 @@ def plot_single_file_abs_errors(file_errors: dict, save_fig_path: Path, nbins: i
             bins = np.logspace(log_min, log_max, nbins)
 
             ax.hist(
-                error_tensor, bins=bins, alpha=0.7, color="C0", edgecolor="black", linewidth=0.5
+                error_tensor,
+                bins=bins,
+                alpha=0.7,
+                color="C0",
+                edgecolor="black",
+                linewidth=0.5,
             )
             ax.set_yscale("log")
             ax.set_xscale("log")
@@ -155,7 +171,13 @@ def plot_single_file_abs_errors(file_errors: dict, save_fig_path: Path, nbins: i
             ax.grid(True, alpha=0.3)
 
             mean_val = np.mean(error_tensor)
-            ax.axvline(mean_val, color="red", linestyle="--", linewidth=2, label=f"Mean: {mean_val:.2e}")
+            ax.axvline(
+                mean_val,
+                color="red",
+                linestyle="--",
+                linewidth=2,
+                label=f"Mean: {mean_val:.2e}",
+            )
             ax.legend(loc="upper right", fontsize=8)
 
     for k, metric in enumerate(metrics):
@@ -168,7 +190,9 @@ def plot_single_file_abs_errors(file_errors: dict, save_fig_path: Path, nbins: i
     plt.close()
 
 
-def plot_single_file_rel_errors(file_errors: dict, save_fig_path: Path, nbins: int = 500) -> None:
+def plot_single_file_rel_errors(
+    file_errors: dict, save_fig_path: Path, nbins: int = 500
+) -> None:
     """Plot per-file relative error distributions (1x3: max/min/mean)."""
     save_fig_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -178,7 +202,9 @@ def plot_single_file_rel_errors(file_errors: dict, save_fig_path: Path, nbins: i
     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
     act_type = act_types[0] if act_types else "Unknown"
     fig.suptitle(
-        f"NVFP4 {act_type} Relative Error - {save_fig_path.stem}", fontsize=16, fontweight="bold"
+        f"NVFP4 {act_type} Relative Error - {save_fig_path.stem}",
+        fontsize=16,
+        fontweight="bold",
     )
 
     for act_type in act_types:
@@ -193,7 +219,12 @@ def plot_single_file_rel_errors(file_errors: dict, save_fig_path: Path, nbins: i
             bins = np.logspace(log_min, log_max, nbins)
 
             ax.hist(
-                error_tensor, bins=bins, alpha=0.7, color="C0", edgecolor="black", linewidth=0.5
+                error_tensor,
+                bins=bins,
+                alpha=0.7,
+                color="C0",
+                edgecolor="black",
+                linewidth=0.5,
             )
             ax.set_yscale("log")
             ax.set_xscale("log")
@@ -201,7 +232,13 @@ def plot_single_file_rel_errors(file_errors: dict, save_fig_path: Path, nbins: i
             ax.grid(True, alpha=0.3)
 
             mean_val = np.mean(error_tensor)
-            ax.axvline(mean_val, color="red", linestyle="--", linewidth=2, label=f"Mean: {mean_val:.2e}")
+            ax.axvline(
+                mean_val,
+                color="red",
+                linestyle="--",
+                linewidth=2,
+                label=f"Mean: {mean_val:.2e}",
+            )
             ax.legend(loc="upper right", fontsize=8)
 
     for k, metric in enumerate(metrics):
@@ -225,7 +262,9 @@ def _plot_group_size_comparison_core(
     out_filename: str,
     summary_title: str,
 ) -> None:
-    print(f"Creating group size comparison plots ({'relative' if relative else 'absolute'})...")
+    print(
+        f"Creating group size comparison plots ({'relative' if relative else 'absolute'})..."
+    )
     save_root.mkdir(parents=True, exist_ok=True)
     metrics = ["max", "min", "mean"]
 
@@ -243,7 +282,9 @@ def _plot_group_size_comparison_core(
                 label = "Original (G1)"
             else:
                 key = f"Group_Rotated_{metric}"
-                label = "Channelwise" if group_size == "channelwise" else f"G{group_size}"
+                label = (
+                    "Channelwise" if group_size == "channelwise" else f"G{group_size}"
+                )
 
             if group_size in all_errors and key in all_errors[group_size]:
                 values = np.array(all_errors[group_size][key])
@@ -254,7 +295,9 @@ def _plot_group_size_comparison_core(
         if all_values:
             ax.violinplot(all_values, showmeans=True, showmedians=False)
             ax.set_yscale("log")
-            ax.set_title(f"{metric.upper()} {'Relative ' if relative else ''}Error", fontsize=12)
+            ax.set_title(
+                f"{metric.upper()} {'Relative ' if relative else ''}Error", fontsize=12
+            )
             ax.set_xlabel("Group Size", fontsize=10)
             ax.set_ylabel(ylabel, fontsize=10)
             ax.set_xticks(range(1, len(x_labels) + 1))
@@ -263,7 +306,15 @@ def _plot_group_size_comparison_core(
 
             for i, values in enumerate(all_values):
                 mean_val = np.mean(values)
-                ax.text(i + 1, mean_val * 1.2, f"{mean_val:.2e}", ha="center", va="bottom", fontsize=8, rotation=45)
+                ax.text(
+                    i + 1,
+                    mean_val * 1.2,
+                    f"{mean_val:.2e}",
+                    ha="center",
+                    va="bottom",
+                    fontsize=8,
+                    rotation=45,
+                )
 
     plt.tight_layout()
     out_path = save_root / out_filename
@@ -281,7 +332,11 @@ def _plot_group_size_comparison_core(
                 label = f"Original (G{group_size})"
             else:
                 key = f"Group_Rotated_{metric}"
-                label = f"Rotated (G{group_size})" if group_size != "channelwise" else "Rotated (channelwise)"
+                label = (
+                    f"Rotated (G{group_size})"
+                    if group_size != "channelwise"
+                    else "Rotated (channelwise)"
+                )
             if group_size in all_errors and key in all_errors[group_size]:
                 values = np.array(all_errors[group_size][key])
                 if len(values) == 0:
@@ -291,12 +346,16 @@ def _plot_group_size_comparison_core(
                 std_val = np.std(values)
                 min_val = np.min(values)
                 max_val = np.max(values)
-                print(f"| {label} | {metric} | {mean_val:.4e} | {median_val:.4e} | {std_val:.4e} | {min_val:.4e} | {max_val:.4e} |")
+                print(
+                    f"| {label} | {metric} | {mean_val:.4e} | {median_val:.4e} | {std_val:.4e} | {min_val:.4e} | {max_val:.4e} |"
+                )
 
     print(f"\nPlots saved to: {save_root}")
 
 
-def plot_group_size_comparison_abs(all_errors: dict, save_root: Path, group_sizes: list) -> None:
+def plot_group_size_comparison_abs(
+    all_errors: dict, save_root: Path, group_sizes: list
+) -> None:
     return _plot_group_size_comparison_core(
         all_errors,
         save_root,
@@ -309,7 +368,9 @@ def plot_group_size_comparison_abs(all_errors: dict, save_root: Path, group_size
     )
 
 
-def plot_group_size_comparison_rel(all_errors: dict, save_root: Path, group_sizes: list) -> None:
+def plot_group_size_comparison_rel(
+    all_errors: dict, save_root: Path, group_sizes: list
+) -> None:
     return _plot_group_size_comparison_core(
         all_errors,
         save_root,
@@ -336,7 +397,9 @@ def plot_error_across_blocks_multi(
     error_across_blocks_relative_mean.png, _max.png, _min.png. Otherwise,
     saves to error_across_blocks_mean.png, _max.png, _min.png for absolute error.
     """
-    print(f"Creating error across blocks plots ({'relative' if relative else 'absolute'})...")
+    print(
+        f"Creating error across blocks plots ({'relative' if relative else 'absolute'})..."
+    )
 
     # X-axis: layer indices. Use provided if available, otherwise infer from files
     if layer_indices is None:
@@ -344,7 +407,9 @@ def plot_error_across_blocks_multi(
         layer_name = "down_proj"
         act_dir = Path(act_root) / layer_name
         act_files = natsorted(act_dir.glob("*_input.pt"))
-        layer_indices = [extract_layer_idx(p.name) for p in act_files]
+        layer_indices = [
+            extract_layer_index(p.name) or 0 for p in act_files
+        ]
 
     metrics = ("mean", "max", "min")
     metric_titles = {"mean": "Mean", "max": "Max", "min": "Min"}
@@ -354,7 +419,11 @@ def plot_error_across_blocks_multi(
     for metric in metrics:
         fig, ax = plt.subplots(1, 1, figsize=(12, 8))
         for gi, group_size in enumerate(group_sizes):
-            key = ("Original_" + metric) if group_size == 1 else ("Group_Rotated_" + metric)
+            key = (
+                ("Original_" + metric)
+                if group_size == 1
+                else ("Group_Rotated_" + metric)
+            )
             if group_size in all_errors and key in all_errors[group_size]:
                 values = np.array(all_errors[group_size][key])
                 if len(values) > 0:
@@ -362,7 +431,11 @@ def plot_error_across_blocks_multi(
                     if group_size == 1:
                         label = "Original (G1)"
                     else:
-                        label = "Rotated (Channelwise)" if group_size == "channelwise" else f"Rotated (G{group_size})"
+                        label = (
+                            "Rotated (Channelwise)"
+                            if group_size == "channelwise"
+                            else f"Rotated (G{group_size})"
+                        )
                     ax.plot(
                         layer_indices,
                         values,
@@ -378,7 +451,9 @@ def plot_error_across_blocks_multi(
         ax.set_ylabel(ylabel, fontsize=12)
         ax.set_xlabel("Layer Index", fontsize=12)
         ax.grid(True, which="both", alpha=0.3)
-        ax.legend(bbox_to_anchor=(1.05, 1), loc="upper left", fontsize=10, title="Group Size")
+        ax.legend(
+            bbox_to_anchor=(1.05, 1), loc="upper left", fontsize=10, title="Group Size"
+        )
 
         title = f"NVFP4 {metric_titles[metric]} Error Across Blocks{' (Relative)' if relative else ''}"
         ax.set_title(title, fontsize=16, fontweight="bold")
@@ -405,8 +480,12 @@ def generate_aggregate_plots(
     abs_comparison_save_root.mkdir(parents=True, exist_ok=True)
     rel_comparison_save_root.mkdir(parents=True, exist_ok=True)
 
-    plot_group_size_comparison_abs(all_errors_abs, abs_comparison_save_root, group_sizes)
-    plot_group_size_comparison_rel(all_errors_rel, rel_comparison_save_root, group_sizes)
+    plot_group_size_comparison_abs(
+        all_errors_abs, abs_comparison_save_root, group_sizes
+    )
+    plot_group_size_comparison_rel(
+        all_errors_rel, rel_comparison_save_root, group_sizes
+    )
     plot_error_across_blocks_multi(
         all_errors_abs,
         abs_comparison_save_root,
@@ -428,6 +507,8 @@ def compute_all_errors_from_activations(
     save_root: Path,
     layer_name: str,
     group_sizes_input: list | None = None,
+    max_bs_ratio: float = 1.0,
+    seq_len: int = 2048,
 ):
     """Compute absolute and relative errors from activation tensors on disk.
 
@@ -451,13 +532,26 @@ def compute_all_errors_from_activations(
         all_errors_abs[group_size] = defaultdict(list)
         all_errors_rel[group_size] = defaultdict(list)
 
+    # Group activation files by block (for MOE models)
+    grouped_entries = group_activation_files(act_files)
+    
     # Layer indices for alignment and CSV
-    layer_indices = [extract_layer_idx(p.name) for p in act_files]
+    layer_indices = []
+    for entry in grouped_entries:
+        block_idx = entry["layer_idx"]
+        if block_idx is not None:
+            layer_indices.append(block_idx)
+        else:
+            # Fallback: use extract_layer_index on first file
+            if entry["files"]:
+                layer_idx = extract_layer_index(entry["files"][0].stem)
+                layer_indices.append(layer_idx if layer_idx is not None else 0)
 
-    for act_file in tqdm(act_files, desc="Processing activation files (combined)"):
-        activation = torch.load(act_file, map_location="cuda").float()
+    for entry in tqdm(grouped_entries, desc="Processing activation files (combined)"):
+        # Load and concat activations (handles MOE experts)
+        activation = load_and_concat_activations(entry["files"], max_bs_ratio, seq_len)
         hidden_size = activation.shape[-1]
-        print(f'{activation.shape=}, {hidden_size=}')
+        print(f"{activation.shape=}, {hidden_size=}, group_name={entry['group_name']}")
 
         for group_size in group_sizes:
             # Per-group save directories for per-file plots
@@ -467,7 +561,9 @@ def compute_all_errors_from_activations(
             rel_group_save_root.mkdir(parents=True, exist_ok=True)
 
             # Build quantizer and rotater
-            quantizers, rotater = create_quantizer_and_rotater(group_size, hidden_size=hidden_size)
+            quantizers, rotater = create_quantizer_and_rotater(
+                group_size, hidden_size=hidden_size
+            )
 
             # Rotate (if needed) and quantize
             rotated = activation if rotater is None else rotater(activation)
@@ -490,13 +586,25 @@ def compute_all_errors_from_activations(
             key_prefix = "Original" if group_size == 1 else "Group_Rotated"
 
             # Store per-file aggregate scalars
-            all_errors_abs[group_size][f"{key_prefix}_max"].append(abs_err_max.mean().item())
-            all_errors_abs[group_size][f"{key_prefix}_min"].append(abs_err_min.mean().item())
-            all_errors_abs[group_size][f"{key_prefix}_mean"].append(abs_err_mean.mean().item())
+            all_errors_abs[group_size][f"{key_prefix}_max"].append(
+                abs_err_max.mean().item()
+            )
+            all_errors_abs[group_size][f"{key_prefix}_min"].append(
+                abs_err_min.mean().item()
+            )
+            all_errors_abs[group_size][f"{key_prefix}_mean"].append(
+                abs_err_mean.mean().item()
+            )
 
-            all_errors_rel[group_size][f"{key_prefix}_max"].append(rel_err_max.mean().item())
-            all_errors_rel[group_size][f"{key_prefix}_min"].append(rel_err_min.mean().item())
-            all_errors_rel[group_size][f"{key_prefix}_mean"].append(rel_err_mean.mean().item())
+            all_errors_rel[group_size][f"{key_prefix}_max"].append(
+                rel_err_max.mean().item()
+            )
+            all_errors_rel[group_size][f"{key_prefix}_min"].append(
+                rel_err_min.mean().item()
+            )
+            all_errors_rel[group_size][f"{key_prefix}_mean"].append(
+                rel_err_mean.mean().item()
+            )
 
             # Per-file hist plots: absolute
             file_errors_abs = {
@@ -506,7 +614,9 @@ def compute_all_errors_from_activations(
                     "mean": abs_err_mean,
                 }
             }
-            abs_fig_path = abs_group_save_root / "per_file_plots" / f"{act_file.stem}_NVFP4.png"
+            abs_fig_path = (
+                abs_group_save_root / "per_file_plots" / f"{entry['group_name']}_NVFP4.png"
+            )
             plot_single_file_abs_errors(file_errors_abs, abs_fig_path)
 
             # Per-file hist plots: relative
@@ -517,8 +627,16 @@ def compute_all_errors_from_activations(
                     "mean": rel_err_mean,
                 }
             }
-            rel_fig_path = rel_group_save_root / "per_file_plots" / f"{act_file.stem}_NVFP4_relative.png"
+            rel_fig_path = (
+                rel_group_save_root
+                / "per_file_plots"
+                / f"{entry['group_name']}_NVFP4_relative.png"
+            )
             plot_single_file_rel_errors(file_errors_rel, rel_fig_path)
+
+        # Release memory after processing each group
+        del activation
+        torch.cuda.empty_cache()
 
     return all_errors_abs, all_errors_rel, group_sizes, layer_indices
 
@@ -539,8 +657,13 @@ def export_all_errors_both_to_csv(
     metrics = ["max", "min", "mean"]
     with open(save_path, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["layer_index", "group_size", "error_kind", "type", "metric", "value"])
-        for error_kind, all_errors in (("absolute", all_errors_abs), ("relative", all_errors_rel)):
+        writer.writerow(
+            ["layer_index", "group_size", "error_kind", "type", "metric", "value"]
+        )
+        for error_kind, all_errors in (
+            ("absolute", all_errors_abs),
+            ("relative", all_errors_rel),
+        ):
             for group_size in group_sizes:
                 key_prefix = "Original" if group_size == 1 else "Group_Rotated"
                 for metric in metrics:
@@ -548,15 +671,23 @@ def export_all_errors_both_to_csv(
                     values = all_errors.get(group_size, {}).get(key, [])
                     for i, value in enumerate(values):
                         layer_idx = layer_indices[i] if i < len(layer_indices) else i
-                        writer.writerow([layer_idx, group_size, error_kind, key_prefix, metric, value])
+                        writer.writerow(
+                            [
+                                layer_idx,
+                                group_size,
+                                error_kind,
+                                key_prefix,
+                                metric,
+                                value,
+                            ]
+                        )
     print(f"Saved CSV: {save_path}")
 
 
 def main() -> None:
     """Run combined NVFP4 absolute and relative error group size comparison analysis."""
-    act_root = Path("figs/group_rotate/act/picked")
-    act_root = Path("figs/group_rotate/act/picked")
-    # save_root = Path("figs/group_rotate/act")
+    # act_root = Path("figs/group_rotate/qwen3-32b/act/picked")
+    act_root = Path("figs/group_rotate/DeepSeek-R1/act/picked")
     save_root = act_root.parent
     layer_name = "down_proj"
 
@@ -564,12 +695,18 @@ def main() -> None:
     csv_combined_path = save_root / "all_errors_combined.csv"
     if csv_combined_path.exists():
         print(f"Found existing CSV: {csv_combined_path}. Loading...")
-        all_errors_abs, all_errors_rel, group_sizes, layer_indices = load_all_errors_from_csv(csv_combined_path)
+        all_errors_abs, all_errors_rel, group_sizes, layer_indices = (
+            load_all_errors_from_csv(csv_combined_path)
+        )
     else:
-        all_errors_abs, all_errors_rel, group_sizes, layer_indices = compute_all_errors_from_activations(
-            act_root,
-            save_root,
-            layer_name,
+        all_errors_abs, all_errors_rel, group_sizes, layer_indices = (
+            compute_all_errors_from_activations(
+                act_root,
+                save_root,
+                layer_name,
+                max_bs_ratio=1.0,
+                seq_len=2048,
+            )
         )
         export_all_errors_both_to_csv(
             all_errors_abs,
@@ -588,10 +725,10 @@ def main() -> None:
         layer_indices=layer_indices,
     )
 
-    print("NVFP4 combined (absolute + relative) group size comparison analysis completed!")
+    print(
+        "NVFP4 combined (absolute + relative) group size comparison analysis completed!"
+    )
 
 
 if __name__ == "__main__":
     main()
-
-

@@ -65,6 +65,8 @@ class NVFP4Quantizer(BaseQuantizer):
         # NVFP4 range and special values
         self.qmin = torch.tensor(-6.0)
         self.qmax = torch.tensor(6.0)
+        self.qmin = FP4_E2M1_DATA.min
+        self.qmax = 6.0 
         self.zero_value = 0.0
 
         # Set up quantization parameters based on granularity

@@ -7,7 +7,11 @@ import sys
 sys.path.append("/nfs/FM/chenshuailin/code/llmc")
 from safetensors.torch import load_file
 import math
+import os
+import random
+import re
 import torch
+from collections import OrderedDict
 from llmc.compression.quantization.hadamard_utils import random_hadamard_matrix
 from llmc.compression.quantization.quant_nvfp4 import NVFP4Quantizer
 from llmc.compression.quantization.quant import IntegerQuantizer
@@ -302,3 +306,164 @@ def plot_quantization_errors(
         print(
             f"  - {quantizer}: boxplot, violin plot, rotater comparison, and error across layers"
         )
+
+
+def extract_block_index(file_stem: str):
+    """Extract block index from filename (e.g., 'block_3_mlp_experts_0' -> 3)."""
+    match = re.search(r"block_(\d+)", file_stem)
+    if match:
+        return int(match.group(1))
+    return None
+
+
+def extract_layer_index(filename: str, fallback_to_last: bool = False):
+    """Extract layer/block index from activation filename.
+    
+    Supports multiple patterns:
+    - model_layers_{idx}_mlp_{name}_input.pt -> idx
+    - block_{idx}_mlp_experts_0 -> idx
+    - Any filename with numbers -> first number (or last if fallback_to_last=True)
+    
+    Args:
+        filename: Filename or file stem to extract index from
+        fallback_to_last: If True, return last number found; otherwise return first (default: False)
+    
+    Returns:
+        int: Layer/block index, or 0 if no number found (or None if fallback_to_last=True and no match)
+    """
+    # Try model_layers pattern first
+    match = re.search(r"model_layers_(\d+)_mlp_", filename)
+    if match:
+        return int(match.group(1))
+    
+    # Try block pattern
+    match = re.search(r"block_(\d+)", filename)
+    if match:
+        return int(match.group(1))
+    
+    # Fallback: find all numbers
+    matches = re.findall(r"(\d+)", filename)
+    if matches:
+        if fallback_to_last:
+            return int(matches[-1])
+        else:
+            return int(matches[0])
+    
+    # No number found
+    return None if fallback_to_last else 0
+
+
+def load_and_concat_activations(act_files, max_bs_ratio, seq_len=2048):
+    """Load activation tensors from disk and concatenate along dim 0.
+
+    For MOE models, 2D tensors [num_tokens, hidden_size] are first concatenated,
+    then randomly sampled tokens are selected (non-continuous), and reshaped to
+    3D [batch_size, seq_len, hidden_size] using the specified seq_len.
+    Shared experts may have 3D inputs, which are handled separately.
+
+    Args:
+        act_files: List of activation file paths
+        max_bs_ratio: Ratio (0-1) of batch size to keep. Random sampling applied after concat.
+        seq_len: Sequence length for reshaping 2D MOE tensors (default: 2048)
+    """
+    # Separate 2D and 3D tensors
+    tensors_2d = []
+    tensors_3d = []
+
+    for path in act_files:
+        tensor = torch.load(path, map_location="cpu").float()
+        
+        if tensor.dim() == 2:
+            tensors_2d.append(tensor)
+        elif tensor.dim() == 3:
+            tensors_3d.append(tensor)
+        else:
+            raise ValueError(f"Unsupported tensor dimension {tensor.dim()} for file {path}")
+
+    processed_tensors = []
+
+    # Process 2D tensors (MOE experts): concat first, then sample and reshape
+    if tensors_2d:
+        # Concatenate all 2D tensors
+        concat_2d = torch.cat(tensors_2d, dim=0)  # [total_tokens, hidden_size]
+        num_tokens, hidden_size = concat_2d.shape
+        
+        # Ensure num_tokens is divisible by seq_len
+        assert num_tokens % seq_len == 0, f"num_tokens ({num_tokens}) must be divisible by seq_len ({seq_len})"
+        
+        # Calculate target batch size based on max_bs_ratio
+        full_batch_size = num_tokens // seq_len
+        if max_bs_ratio < 1.0:
+            target_batch_size = int(full_batch_size * max_bs_ratio)
+        else:
+            target_batch_size = full_batch_size
+        
+        # Randomly sample tokens (non-continuous)
+        required_tokens = target_batch_size * seq_len
+        assert num_tokens >= required_tokens, f"num_tokens ({num_tokens}) must be greater than or equal to required_tokens ({required_tokens})"
+        # Randomly select token indices
+        selected_indices = random.sample(range(num_tokens), required_tokens)
+        selected_indices = torch.tensor(selected_indices, dtype=torch.long)
+        sampled_tensor = concat_2d[selected_indices]
+        
+        # Reshape to 3D: [batch_size, seq_len, hidden_size]
+        tensor_3d = sampled_tensor.view(target_batch_size, seq_len, hidden_size)
+        processed_tensors.append(tensor_3d)
+
+    # Process 3D tensors (shared experts or non-MOE): apply max_bs_ratio separately
+    for tensor in tensors_3d:
+        batch_size = tensor.shape[0]
+        if max_bs_ratio < 1.0:
+            keep_batches = int(batch_size * max_bs_ratio)
+            if keep_batches > 0:
+                tensor = tensor[:keep_batches]
+        processed_tensors.append(tensor)
+
+    if not processed_tensors:
+        raise ValueError("No activation files provided for processing.")
+
+    # Concatenate all processed tensors along dim 0
+    activation = torch.cat(processed_tensors, dim=0)
+    del processed_tensors
+
+    return activation.to("cuda", non_blocking=True)
+
+
+def group_activation_files(act_files):
+    """Group activation files that belong to the same block."""
+    grouped = OrderedDict()
+
+    for path in act_files:
+        block_idx = extract_block_index(path.stem)
+        # Use block_idx as the grouping key
+        key = (0, block_idx) if block_idx is not None else (1, path.stem)
+        if key not in grouped:
+            grouped[key] = {"layer_idx": block_idx, "files": []}
+        grouped[key]["files"].append(path)
+
+    grouped_entries = []
+    for entry in grouped.values():
+        files = entry["files"]
+        if not files:
+            continue
+
+        block_idx = entry["layer_idx"]
+        stems = [f.stem for f in files]
+        if len(stems) == 1:
+            group_name = stems[0]
+        else:
+            # For MOE layers, use block index in group name
+            if block_idx is not None:
+                group_name = f"block_{block_idx}_concat"
+            else:
+                common_prefix = os.path.commonprefix(stems).rstrip("_-. ")
+                if common_prefix:
+                    group_name = f"{common_prefix}_concat"
+                else:
+                    group_name = f"{stems[0]}_concat"
+
+        grouped_entries.append(
+            {"layer_idx": block_idx, "files": files, "group_name": group_name}
+        )
+
+    return grouped_entries

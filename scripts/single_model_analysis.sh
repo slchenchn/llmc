@@ -21,14 +21,14 @@ SEQ_LEN=2048
 #     --model_path /data/chenshuailin/checkpoints/Qwen/Qwen3-0.6B \
 #     --seq_len ${SEQ_LEN} &
 
-CUDA_VISIBLE_DEVICES=0 python tools/quant_analysis/single_model_analysis.py \
-    --n_samples $N_SAMPLES \
-    --output_dir $OUTPUT_ROOT/Qwen3-0.6B/quarot \
-    --dataset_name ${DS_NAME} \
-    --data_path ${DS_PATH} \
-    --model_type ${MODEL_TYPE} \
-    --model_path checkpoints/Qwen3-0.6B/quarot/sym_w4_a8-dynamic/transformed_model \
-    --seq_len ${SEQ_LEN} &
+# CUDA_VISIBLE_DEVICES=0 python tools/quant_analysis/single_model_analysis.py \
+#     --n_samples $N_SAMPLES \
+#     --output_dir $OUTPUT_ROOT/Qwen3-0.6B/quarot \
+#     --dataset_name ${DS_NAME} \
+#     --data_path ${DS_PATH} \
+#     --model_type ${MODEL_TYPE} \
+#     --model_path checkpoints/Qwen3-0.6B/quarot/sym_w4_a8-dynamic/transformed_model \
+#     --seq_len ${SEQ_LEN} &
 
 
 # ############################# Qwen3-1.7B #############################
@@ -82,11 +82,25 @@ CUDA_VISIBLE_DEVICES=0 python tools/quant_analysis/single_model_analysis.py \
 #     --model_path /data/chenshuailin/checkpoints/Qwen/Qwen3-32B \
 #     --seq_len ${SEQ_LEN} &
 
+# CUDA_VISIBLE_DEVICES=1 python tools/quant_analysis/single_model_analysis.py \
+#     --n_samples $N_SAMPLES \
+#     --output_dir $OUTPUT_ROOT/Qwen3-32B/quarot \
+#     --dataset_name ${DS_NAME} \
+#     --data_path ${DS_PATH} \
+#     --model_type ${MODEL_TYPE} \
+#     --model_path checkpoints/Qwen3-32B/quarot/sym_w8_a8-dynamic/transformed_model \
+#     --seq_len ${SEQ_LEN} &
+
+
+
+############################# DeepSeek-R1 #############################
+
+MODEL_TYPE=DeepseekV3
 CUDA_VISIBLE_DEVICES=1 python tools/quant_analysis/single_model_analysis.py \
     --n_samples $N_SAMPLES \
-    --output_dir $OUTPUT_ROOT/Qwen3-32B/quarot \
+    --output_dir $OUTPUT_ROOT/DeepSeek-R1/bf16 \
     --dataset_name ${DS_NAME} \
     --data_path ${DS_PATH} \
     --model_type ${MODEL_TYPE} \
-    --model_path checkpoints/Qwen3-32B/quarot/sym_w8_a8-dynamic/transformed_model \
+    --model_path /nfs/FM/checkpoints/DeepSeek-R1-BF16 \
     --seq_len ${SEQ_LEN} &
