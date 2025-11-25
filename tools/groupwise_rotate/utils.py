@@ -430,7 +430,13 @@ def load_and_concat_activations(act_files, max_bs_ratio, seq_len=2048):
 
 
 def group_activation_files(act_files):
-    """Group activation files that belong to the same block."""
+    """Group activation files that belong to the same block.
+    
+    Returns a list of dicts, each containing:
+    - layer_idx: int, the layer/block index (always set, never None)
+    - files: list of Path objects
+    - group_name: str, name for the group
+    """
     grouped = OrderedDict()
 
     for path in act_files:
@@ -442,12 +448,20 @@ def group_activation_files(act_files):
         grouped[key]["files"].append(path)
 
     grouped_entries = []
-    for entry in grouped.values():
+    for entry_idx, entry in enumerate(grouped.values()):
         files = entry["files"]
         if not files:
             continue
 
         block_idx = entry["layer_idx"]
+        # Determine layer_idx: use block_idx if available, otherwise extract from first file, otherwise use entry_idx
+        if block_idx is not None:
+            layer_idx = block_idx
+        else:
+            layer_idx = extract_layer_index(files[0].stem)
+            if layer_idx is None:
+                layer_idx = entry_idx
+        
         stems = [f.stem for f in files]
         if len(stems) == 1:
             group_name = stems[0]
@@ -463,7 +477,7 @@ def group_activation_files(act_files):
                     group_name = f"{stems[0]}_concat"
 
         grouped_entries.append(
-            {"layer_idx": block_idx, "files": files, "group_name": group_name}
+            {"layer_idx": layer_idx, "files": files, "group_name": group_name}
         )
 
     return grouped_entries

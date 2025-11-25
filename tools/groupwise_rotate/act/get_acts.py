@@ -96,14 +96,14 @@ def get_down_proj_activations(
 
 if __name__ == "__main__":
     # model_path = "/nfs/FM/chenshuailin/checkpoints/Qwen/Qwen2.5-3B-Instruct/"
-    # model_path = "/nfs/FM/chenshuailin/checkpoints/Qwen/Qwen3-32B"
-    # save_dir = "figs/group_rotate/qwen3-32b/act/picked"
+    model_path = "/nfs/FM/chenshuailin/checkpoints/Qwen/Qwen3-32B"
+    save_dir = "figs/group_rotate/qwen3-32b/act/picked"
 
-    model_path = "/nfs/FM/checkpoints/DeepSeek-R1-BF16"
-    save_dir = "figs/group_rotate/DeepSeek-R1/act/picked"
+    # model_path = "/nfs/FM/checkpoints/DeepSeek-R1-BF16"
+    # save_dir = "figs/group_rotate/DeepSeek-R1/act/picked"
 
     data_dir = "data/wikitext2"
-    layer_suffix = "down_proj"
+    layer_suffix = "q_proj"
     batch_size = 16
 
     save_dir = save_dir + f"/{layer_suffix}"

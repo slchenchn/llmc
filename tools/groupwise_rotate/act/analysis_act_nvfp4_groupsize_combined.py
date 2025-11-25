@@ -60,7 +60,8 @@ def compute_relative_error(
     qdq: torch.Tensor, x: torch.Tensor, eps: float = 1e-16
 ) -> torch.Tensor:
     """Compute element-wise relative error abs(qdq - x) / (abs(x) + eps)."""
-    return (qdq - x).abs() / (x.abs() + eps)
+    # return (qdq - x).abs() / (x.abs() + eps)
+    return (qdq - x).pow(2) / (x.pow(2) + eps)
 
 
 def load_all_errors_from_csv(csv_path: Path):
@@ -687,7 +688,8 @@ def export_all_errors_both_to_csv(
 def main() -> None:
     """Run combined NVFP4 absolute and relative error group size comparison analysis."""
     # act_root = Path("figs/group_rotate/qwen3-32b/act/picked")
-    act_root = Path("figs/group_rotate/DeepSeek-R1/act/picked")
+    # act_root = Path("figs/group_rotate/DeepSeek-R1/act/picked")
+    act_root = Path("figs/group_rotate/qwen2.5-3B-it/act/picked")
     save_root = act_root.parent
     layer_name = "down_proj"
 
