@@ -1,9 +1,7 @@
 set -x
 
 TP=${1:-8}
-
-# export LD_LIBRARY_PATH=/usr/local/lib/python3.10/dist-packages/torch/lib:/usr/local/lib/python3.10/dist-packages/torch_tensorrt/lib:/usr/local/cuda/compat/lib:/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/opt/hpcx/ucx/lib
-# export VLLM_USE_V1=0
+shift || true
 
 MODEL=$(readlink -f $(dirname $0))
 if [ -d "$MODEL/vllm_quant_model" ]; then
@@ -12,12 +10,53 @@ elif [ -d "$MODEL/autoawq_quant_model" ]; then
     MODEL="$MODEL/autoawq_quant_model"
 fi
 
-vllm serve $MODEL \
-    --tensor-parallel-size $TP \
-    --max-model-len 32768 \
-    --trust-remote-code \
-    --port 9000 \
-    ${@:2}
+# Determine visible GPU indices
+if [ -n "$CUDA_VISIBLE_DEVICES" ]; then
+    IFS=',' read -r -a ALL_GPUS <<<"$CUDA_VISIBLE_DEVICES"
+else
+    mapfile -t ALL_GPUS < <(nvidia-smi --query-gpu=index --format=csv,noheader | tr -d ' ')
+fi
 
+NUM_GPUS=${#ALL_GPUS[@]}
+if [ -z "$NUM_GPUS" ] || [ "$NUM_GPUS" -eq 0 ]; then
+    echo "No GPUs detected."
+    exit 1
+fi
 
-    # --gpu-memory-utilization 0.85
+if [ "$TP" -le 0 ]; then
+    echo "Invalid TP: $TP"
+    exit 1
+fi
+
+NUM_INSTANCES=$((NUM_GPUS / TP))
+if [ "$NUM_INSTANCES" -lt 1 ]; then
+    echo "Not enough GPUs ($NUM_GPUS) for TP=$TP"
+    exit 1
+fi
+
+BASE_PORT=${BASE_PORT:-8200}
+HOST=${HOST:-0.0.0.0}
+
+for ((i = 0; i < NUM_INSTANCES; i++)); do
+    start=$((i * TP))
+    end=$((start + TP - 1))
+    SLICE=("${ALL_GPUS[@]:start:TP}")
+    GPU_LIST=$(
+        IFS=,
+        echo "${SLICE[*]}"
+    )
+    PORT=$((BASE_PORT + i))
+
+    echo "Starting instance $i on GPUs [$GPU_LIST], port $PORT"
+    CUDA_VISIBLE_DEVICES="$GPU_LIST" vllm serve "$MODEL" \
+        --tensor-parallel-size "$TP" \
+        --max-model-len 32768 \
+        --trust-remote-code \
+        --port "$PORT" \
+        --host "$HOST" \
+        "$@" &
+done
+
+wait
+
+# --gpu-memory-utilization 0.85

@@ -18,7 +18,7 @@ set -x
 uv pip install -r requirements.txt
 
 uv pip install flash-attn --no-build-isolation
-uv pip install -U transformers datasets
+uv pip install -U transformers datasets==3.6.0
 
 uv pip install opencv-fixer==0.2.5
 python -c "from opencv_fixer import AutoFix; AutoFix()"
