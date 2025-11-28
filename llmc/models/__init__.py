@@ -2,6 +2,7 @@ from .bloom import Bloom
 from .chatglm import ChatGLM
 from .deepseekv2 import DeepseekV2
 from .deepseekv3 import DeepseekV3
+from .kimik2 import KimiK2Thinking
 from .falcon import Falcon
 from .gemma2 import Gemma2
 from .glm4v import GLM4V
@@ -29,3 +30,4 @@ from .starcoder import Starcoder
 from .vila import Vila
 from .vit import Vit
 from .qwen3_moe import Qwen3MOE
+from .minimax_m2 import MiniMaxM2

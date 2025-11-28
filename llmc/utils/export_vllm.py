@@ -1,6 +1,15 @@
 import json
 
 
+def _get_no_quant_layers(model):
+    """Get layer names that have no_quant attribute set to True."""
+    no_quant_layers = []
+    for name, module in model.model.named_modules():
+        if getattr(module, "no_quant", False):
+            no_quant_layers.append(name)
+    return no_quant_layers
+
+
 def update_vllm_quant_config(
     model,
     config,
@@ -63,7 +72,7 @@ def _update_nvfp4_vllm_quant_config(
         },
         "format": "nvfp4-pack-quantized",
         "global_compression_ratio": None,
-        "ignore": ["lm_head"],
+        "ignore": ["lm_head"] + _get_no_quant_layers(model),
         "kv_cache_scheme": kvcache_quant_cfg,
         "quant_method": "compressed-tensors",
         "quantization_status": "compressed",
@@ -186,7 +195,7 @@ def _update_vanilla_vllm_quant_config(
             }
         },
         "format": vllm_quant_format,
-        "ignore": model.skip_layer_name(),
+        "ignore": model.skip_layer_name() + _get_no_quant_layers(model),
         "quant_method": vllm_quant_method,
     }
 

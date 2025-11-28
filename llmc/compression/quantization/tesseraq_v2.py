@@ -227,9 +227,8 @@ class TesseraQV2(BaseBlockwiseQuantization):
                 for index, subset in enumerate(subsets):
                     layers_dict = subset["layers"]
                     input_name = subset["input"][0]
-                    input_tensors = copy.deepcopy(input_feat[input_name])
+                    input_tensors = input_feat[input_name]
                     self.register_act_qparams(layers_dict, input_tensors)
-                    del input_tensors
 
     @torch.no_grad()
     def block_transform(self, block, input_feat, block_kwargs):

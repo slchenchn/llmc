@@ -2,8 +2,10 @@ import torch
 from loguru import logger
 
 from llmc.utils.registry_factory import ALGO_REGISTRY
+from llmc.utils.utils import get_decoder_layer_ori_device
 
 from .base_blockwise_quantization import BaseBlockwiseQuantization
+from .module_utils import may_convert_fp8_weight_to_bf16
 
 
 @ALGO_REGISTRY
@@ -21,7 +23,8 @@ class RTN(BaseBlockwiseQuantization):
         if getattr(weight_cfg, "quant_type", None) == "nvfp4" and getattr(
             weight_cfg, "share_global_scale", False
         ):
-            self.collect_block_qparams(block)
+            with self.block_on_cuda(block):
+                self.collect_block_qparams(block)
 
         if self.act_static:
             super().block_opt(block, *opt_kwargs)
@@ -48,9 +51,12 @@ class RTN(BaseBlockwiseQuantization):
                 args["qmax"] = module.buf_qmax
             if hasattr(module, "buf_qmin"):
                 args["qmin"] = module.buf_qmin
-                
+
             if len(args) == 4:
-                return wquantizer.real_quant_weight_static(module.weight.data, args)
+                weight_f16 = may_convert_fp8_weight_to_bf16(module)
+                return wquantizer.real_quant_weight_static(weight_f16, args)
+            else:
+                raise ValueError(f"Invalid arguments: {args}")
         else:
             args = {}
 

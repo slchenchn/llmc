@@ -4,9 +4,11 @@ import gc
 import json
 import os
 import re
-from collections import defaultdict, OrderedDict
+from collections import OrderedDict, defaultdict
+from contextlib import contextmanager
 from functools import partial
 
+from qtorch.quant import block_quantize
 import torch
 import torch.distributed as dist
 import torch.nn as nn
@@ -17,8 +19,8 @@ from llmc.utils.registry_factory import KV_REGISTRY, TOKEN_REDUCTION_REGISTRY
 from ..blockwise_optimization import BlockwiseOpt
 from .attn_utils import _LLMC_ATTN_MAP_
 from .auto_clip import AutoClipper, AutoClipperV3, AutoClipperV4
-from .utils import is_fp8_supported_gpu
 from .quant_nvfp4 import NVFP4Quantizer
+from .utils import is_fp8_supported_gpu
 
 if is_fp8_supported_gpu():
     from .fp8_kernel import weight_cast_to_bf16, weight_cast_to_fp8
@@ -43,6 +45,7 @@ from .module_utils import (
     LlmcActFn,
     OriginFloatLinear,
     RotateLinear,
+    may_convert_fp8_weight_to_bf16,
 )
 from .quant import (
     FloatQuantizer,
@@ -59,6 +62,42 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
         self.set_quant_config()
         self.rotary_emb = getattr(self.model, "rotary_emb", None)
 
+    def get_block_memory_usage(self, block):
+        """计算 block 的参数和 buffer 占用的存储空间（字节）"""
+        param_bytes = sum(p.numel() * p.element_size() for p in block.parameters())
+        buffer_bytes = sum(b.numel() * b.element_size() for b in block.buffers())
+        return param_bytes, buffer_bytes
+
+    @contextmanager
+    def block_on_cuda(self, block):
+        """Context manager to temporarily move a block to CUDA and restore it back."""
+        ori_device = get_decoder_layer_ori_device(block)
+        block.cuda()
+        param_before, buffer_before = self.get_block_memory_usage(block)
+        # logger.info(
+        #     f"[block_on_cuda] Before yield - params: {param_before / 1024**3:.2f} GB, buffers: {buffer_before / 1024**3:.2f} GB, total: {(param_before + buffer_before) / 1024**3:.2f} GB"
+        # )
+        yield block_quantize
+
+        # 删除 tmp_weight 释放显存
+        for m in block.modules():
+            if hasattr(m, "tmp_weight"):
+                delattr(m, "tmp_weight")
+        gc.collect()
+        torch.cuda.empty_cache()
+
+        param_after, buffer_after = self.get_block_memory_usage(block)
+        # logger.info(
+        #     f"[block_on_cuda] After yield - params: {param_after / 1024**3:.2f} GB, buffers: {buffer_after / 1024**3:.2f} GB, total: {(param_after + buffer_after) / 1024**3:.2f} GB"
+        # )
+        diff_param = param_after - param_before
+        diff_buffer = buffer_after - buffer_before
+        diff_total = diff_param + diff_buffer
+        logger.info(
+            f"[block_on_cuda] Delta - params: {diff_param / 1024**3:.2f} GB, buffers: {diff_buffer / 1024**3:.2f} GB, total: {diff_total / 1024**3:.2f} GB"
+        )
+        block.to(ori_device)
+
     def w_qdq(self, module, wquantizer):
         args = {"lowbound_factor": None, "upbound_factor": None}
         if hasattr(module, "buf_lowbound_factor"):
@@ -66,12 +105,7 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
         if hasattr(module, "buf_upbound_factor"):
             args["upbound_factor"] = module.buf_upbound_factor
 
-        if module.weight.data.dtype == torch.float8_e4m3fn:
-            tmp_weight = weight_cast_to_bf16(module.weight, module.weight_scale_inv).to(
-                torch.bfloat16
-            )
-        else:
-            tmp_weight = module.weight
+        tmp_weight = may_convert_fp8_weight_to_bf16(module)
 
         if self.is_nvfp4:
             args["global_scale"] = module.buf_global_scale
@@ -143,7 +177,9 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
                 "intermediate_size must be divisible by online_rotate_tp"
             )
             had_K, K = get_hadK(
-                self.intermediate_size // self.online_rotate_tp if "down_proj" in name else self.num_heads
+                self.intermediate_size // self.online_rotate_tp
+                if "down_proj" in name
+                else self.num_heads
             )
             params_dict = {
                 "had_K": had_K,
@@ -432,10 +468,10 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
             self.quant_config["weight"].get("quant_type", "int-quant") == "nvfp4"
         )
         if self.is_nvfp4:
-            if self.act_static:
-                assert self.true_sequential, (
-                    "NVFP4 only supports true_sequential=True when act_static=True"
-                )
+            # if self.act_static:
+            #     assert self.true_sequential, (
+            #         "NVFP4 only supports true_sequential=True when act_static=True"
+            #     )
             act_cfg = self.quant_config.get("act", {})
             if act_cfg:
                 assert act_cfg.get("quant_type", "int-quant") == "nvfp4"
@@ -517,8 +553,12 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
         extra_modules.update(matmul_modules)
         extra_modules.update(softmax_modules)
 
-    def collect_nvf4_shared_scales(self, weight_dict):
-        weight_dict = OrderedDict(weight_dict)
+    def collect_nvf4_shared_scales(self, layer_dict):
+        layer_dict = OrderedDict(layer_dict)
+        weight_dict = OrderedDict()
+        for n, layer in layer_dict.items():
+            weight_f16 = may_convert_fp8_weight_to_bf16(layer).float()
+            weight_dict[n] = weight_f16
         whole_weight = torch.cat([v for v in weight_dict.values()], dim=0)
         _, global_scale, local_scales, qmax, qmin = self.wquantizer.get_tensor_qparams(
             whole_weight
@@ -543,6 +583,64 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
             local_scale_idx_start = local_scale_idx_end
         return qparams
 
+    def collect_upgate_qparams(self, named_linears):
+        upgate_qparams = {}
+        if "mlp.gate_proj" in named_linears:
+            """ dense layer"""
+            upgate_qparams["dense"] = self.collect_nvf4_shared_scales(
+                {
+                    "gate_proj": named_linears["mlp.gate_proj"],
+                    "up_proj": named_linears["mlp.up_proj"],
+                }
+            )
+        else:
+            """ MOE layer """
+            expert_ids = set()
+            is_pattern1 = False
+            is_pattern2 = False
+
+            for n in named_linears:
+                # Handle different MoE naming conventions
+                # Pattern 1: mlp.experts.X.gate_proj
+                if "mlp.experts" in n and "gate_proj" in n:
+                    expert_ids.add(n.split(".")[2])
+                    is_pattern1 = True
+
+                # Pattern 2: block_sparse_moe.experts.X.w1 (MiniMaxM2)
+                elif "block_sparse_moe.experts" in n and ".w1" in n:
+                    expert_ids.add(n.split(".")[2])
+                    is_pattern2 = True
+
+            if is_pattern1 and is_pattern2:
+                raise ValueError("Mixed MoE naming conventions found")
+
+            # Filter out non-integer IDs just in case, though typical split logic expects ints
+            valid_ids = [int(eid) for eid in expert_ids if str(eid).isdigit()]
+            if not valid_ids:
+                raise ValueError("No expert IDs found")
+            assert len(valid_ids) == max(valid_ids) + 1, (
+                "Expert IDs are not consecutive"
+            )
+
+            for eid in valid_ids:
+                if is_pattern1:
+                    gate_name = f"mlp.experts.{eid}.gate_proj"
+                    up_name = f"mlp.experts.{eid}.up_proj"
+                elif is_pattern2:
+                    gate_name = f"block_sparse_moe.experts.{eid}.w1"
+                    up_name = f"block_sparse_moe.experts.{eid}.w3"
+
+                assert gate_name in named_linears and up_name in named_linears, (
+                    f"Gate or up name not found: {gate_name} or {up_name}"
+                )
+                upgate_qparams[eid] = self.collect_nvf4_shared_scales(
+                    {
+                        gate_name.split(".")[-1]: named_linears[gate_name],
+                        up_name.split(".")[-1]: named_linears[up_name],
+                    }
+                )
+        return upgate_qparams
+
     @torch.no_grad()
     def collect_block_qparams(self, block):
         named_linears = self.model.get_block_linears(block)
@@ -551,32 +649,26 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
             weight_cfg.get("quant_type", "int-quant") == "nvfp4"
         ) and weight_cfg.get("share_global_scale", False)
         if use_share_global_scale:
-            q = named_linears["self_attn.q_proj"].weight
-            k = named_linears["self_attn.k_proj"].weight
-            v = named_linears["self_attn.v_proj"].weight
             qkv_qparams = self.collect_nvf4_shared_scales(
-                {"q_proj": q, "k_proj": k, "v_proj": v}
+                {
+                    "q_proj": named_linears["self_attn.q_proj"],
+                    "k_proj": named_linears["self_attn.k_proj"],
+                    "v_proj": named_linears["self_attn.v_proj"],
+                }
             )
 
-            gate = named_linears["mlp.gate_proj"].weight
-            up = named_linears["mlp.up_proj"].weight
-            upgate_qparams = self.collect_nvf4_shared_scales(
-                {"gate_proj": gate, "up_proj": up}
-            )
+            upgate_qparams = self.collect_upgate_qparams(named_linears)
 
         for n, m in named_linears.items():
+            if getattr(m, "no_quant", False):
+                continue
             args = {}
             if hasattr(m, "buf_lowbound_factor"):
                 args["lowbound_factor"] = m.buf_lowbound_factor
             if hasattr(m, "buf_upbound_factor"):
                 args["upbound_factor"] = m.buf_upbound_factor
 
-            if m.weight.data.dtype == torch.float8_e4m3fn:
-                tmp_weight_data = weight_cast_to_bf16(
-                    m.weight.data, m.weight_scale_inv.data
-                ).to(torch.bfloat16)
-            else:
-                tmp_weight_data = m.weight.data
+            tmp_weight_data = may_convert_fp8_weight_to_bf16(m)
 
             if use_share_global_scale:
                 global_scale = None
@@ -589,13 +681,19 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
                         qkv_qparams["qmax"],
                         qkv_qparams["qmin"],
                     )
-                elif pname in ("gate_proj", "up_proj"):
+                elif pname in ("gate_proj", "up_proj", "w1", "w3"):
+                    if "mlp.experts" in n or "block_sparse_moe.experts" in n:
+                        eid = int(n.split(".")[2])
+                        current_qparams = upgate_qparams[eid]
+                    else:
+                        current_qparams = upgate_qparams["dense"]
+
                     qparams = (
                         None,
-                        upgate_qparams["global_scale"],
-                        upgate_qparams["local_scales"][pname],
-                        upgate_qparams["qmax"],
-                        upgate_qparams["qmin"],
+                        current_qparams["global_scale"],
+                        current_qparams["local_scales"][pname],
+                        current_qparams["qmax"],
+                        current_qparams["qmin"],
                     )
                 else:
                     qparams = self.wquantizer.get_tensor_qparams(
@@ -682,30 +780,27 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
         if self.quant_kvcache:
             self.register_kv_cache(block)
 
-        block_ori_device = get_decoder_layer_ori_device(block)
-        block = block.cuda()
-        named_linears = self.model.get_block_linears(block)
-        extra_modules = self.model.get_extra_modules(block)
+        with self.block_on_cuda(block):
+            named_linears = self.model.get_block_linears(block)
+            extra_modules = self.model.get_extra_modules(block)
 
-        if self.quant_attn:
-            self.replace_attention(block, extra_modules)
-        if self.quant_act_fn:
-            self.replace_act_fn(block, extra_modules)
+            if self.quant_attn:
+                self.replace_attention(block, extra_modules)
+            if self.quant_act_fn:
+                self.replace_act_fn(block, extra_modules)
 
-        input_feat_modules = {
-            k: v for d in [named_linears, extra_modules] for k, v in d.items()
-        }
-        logger.info(f"input_feat_modules: {input_feat_modules}")
-        input_feat = defaultdict(list)
+            input_feat_modules = {
+                k: v for d in [named_linears, extra_modules] for k, v in d.items()
+            }
+            logger.info(f"input_feat_modules: {input_feat_modules}")
+            input_feat = defaultdict(list)
 
-        handles = self.register_hooks(input_feat_modules, input_feat)
+            handles = self.register_hooks(input_feat_modules, input_feat)
 
-        self.block_init(block)
+            self.block_init(block)
 
-        self.run(block, input_feat, handles)
+            self.run(block, input_feat, handles)
 
-        # block = block.cpu()
-        block.to(block_ori_device)
         del input_feat, block
         gc.collect()
         torch.cuda.empty_cache()
@@ -714,8 +809,11 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
         handles = []
         if not self.data_free:
             for name in input_feat_modules:
+                module = input_feat_modules[name]
+                # if getattr(module, "no_quant", False):
+                #     continue
                 handles.append(
-                    input_feat_modules[name].register_forward_hook(
+                    module.register_forward_hook(
                         functools.partial(
                             self.cache_input_hook, name=name, feat_dict=input_feat
                         )
@@ -724,6 +822,7 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
         return handles
 
     def run(self, block, input_feat, handles):
+        # collect input_feat
         if not self.data_free:
             if self.quant_out:
                 self.block_forward(block)
@@ -751,12 +850,109 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
             self.input["data"] = self.block_forward(block)
         torch.cuda.empty_cache()
 
+    def may_calibrate_all_experts_down_proj(self, input_feat):
+        """only for MOE models"""
+        if not getattr(self.model, "is_moe", False):
+            return
+
+        if self.model.calibrate_all_experts:
+            all_down_inp_acts = []
+            down_name_template = getattr(self.model, "expert_down_name_template", None)
+            if down_name_template:
+                for i in range(self.model.num_experts):
+                    down_name = down_name_template.format(i)
+                    if down_name in input_feat:
+                        all_down_inp_acts.extend(
+                            [
+                                a.squeeze(0) for a in input_feat[down_name]
+                            ]  # remove the batch dimension
+                        )
+
+                expected_moe_tokens = (
+                    self.config.calib.n_samples
+                    * self.config.calib.seq_len
+                    * self.model.num_experts_per_tok
+                )
+                cur_tokens = sum(len(a) for a in all_down_inp_acts)
+
+                assert cur_tokens == expected_moe_tokens, (
+                    f"Expected {expected_moe_tokens} moe tokens, but got {cur_tokens}"
+                )
+                # all_down_inp_acts = torch.cat(all_down_inp_acts, dim=1).squeeze()
+                # assert all_down_inp_acts.shape[0] == self.config.calib.n_samples * self.config.calib.512
+                for i in range(self.model.num_experts):
+                    down_name = down_name_template.format(i)
+                    input_feat[down_name] = all_down_inp_acts
+        else:
+            # If an expert's input_feat is empty, use all other experts' tokens as a substitute
+            # This applies to gate_proj, up_proj, and down_proj
+            down_name_template = getattr(self.model, "expert_down_name_template", None)
+            gate_name_template = getattr(self.model, "expert_gate_name_template", None)
+            up_name_template = getattr(self.model, "expert_up_name_template", None)
+            if down_name_template and gate_name_template and up_name_template:
+                expert_templates = {
+                    "gate_proj": gate_name_template,
+                    "up_proj": up_name_template,
+                    "down_proj": down_name_template,
+                }
+
+                # First, check if any expert has empty input_feat
+                has_empty_expert = False
+                for i in range(self.model.num_experts):
+                    down_name = down_name_template.format(i)
+                    if down_name not in input_feat or not input_feat[down_name]:
+                        has_empty_expert = True
+                        break
+
+                # Only process if there are empty experts
+                if has_empty_expert:
+                    # Process each layer type (gate, up, down)
+                    for layer_type, template in expert_templates.items():
+                        # Collect all non-empty expert activations for this layer type
+                        all_inp_acts = []
+                        for i in range(self.model.num_experts):
+                            layer_name = template.format(i)
+                            if layer_name in input_feat and input_feat[layer_name]:
+                                all_inp_acts.extend(
+                                    [a.squeeze(0) for a in input_feat[layer_name]]
+                                )
+
+                        # Verify the total token count matches expected moe tokens
+                        expected_moe_tokens = (
+                            self.config.calib.n_samples
+                            * self.config.calib.seq_len
+                            * self.model.num_experts_per_tok
+                        )
+                        cur_tokens = sum(len(a) for a in all_inp_acts)
+                        assert cur_tokens == expected_moe_tokens, (
+                            f"Expected {expected_moe_tokens} moe tokens, but got {cur_tokens}"
+                        )
+
+                        # For each expert with empty input_feat, substitute with all other experts' tokens
+                        for i in range(self.model.num_experts):
+                            layer_name = template.format(i)
+                            if (
+                                layer_name not in input_feat
+                                or not input_feat[layer_name]
+                            ):
+                                if all_inp_acts:
+                                    logger.info(
+                                        f"Expert {i} ({layer_name}) has empty input_feat, "
+                                        f"substituting with {len(all_inp_acts)} tokens from other experts"
+                                    )
+                                    input_feat[layer_name] = all_inp_acts
+                                else:
+                                    logger.warning(
+                                        f"Expert {i} ({layer_name}) has empty input_feat and no other experts have tokens"
+                                    )
+
     def block_transform(self, block, input_feat, block_kwargs):
         logger.info(f"Start transform the {self.block_idx}-th block")
         subsets = self.model.get_subsets_in_block(block)
 
         if self.act_static:
             self.register_non_linear_qparams(block, input_feat)
+            self.may_calibrate_all_experts_down_proj(input_feat)
 
         self.set_non_linear_mode("fake_quant", block, False)
 
@@ -765,6 +961,13 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
             layers_dict = subset["layers"]
             input_name = subset["input"][0]
             inspect_has_kwargs = subset["has_kwargs"]
+
+            no_quants = [
+                getattr(layer, "no_quant", False) for layer in subset["layers"]
+            ]
+            # assert set(no_quants) == 1, f'there '
+            do_quant = not all(no_quants)
+
             if inspect_has_kwargs:
                 if "sub_keys" in subset:
                     subset_kwargs = [
@@ -774,26 +977,40 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
                     subset_kwargs = block_kwargs
             else:
                 subset_kwargs = {}
-            if self.act_static:
-                input_tensors = copy.deepcopy(input_feat[input_name])
+            if self.act_static and do_quant:
+                input_tensors = input_feat[input_name]
+                assert input_tensors, f"input_tensors is empty for {input_name}"
                 self.register_act_qparams(layers_dict, input_tensors)
-                del input_tensors
             self.subset_transform(
                 subset,
                 input_feat,
                 subset_kwargs,
             )
 
-            if self.true_sequential and index != len(subsets) - 1:
-                next_subset = subsets[index + 1]
-                input_feat_subset = self.rehook_next_subset(block, subset, next_subset)
+            if (
+                subset.get("true_sequential", True)
+                and self.true_sequential
+                and index != len(subsets) - 1
+                and do_quant
+            ):
+                logger.info(f"rehook all next subset: {subsets[index + 1]}")
+                input_feat_subset = self.rehook_next_subset(
+                    block, subset, subsets[index + 1 :]
+                )
                 input_feat.update(input_feat_subset)
 
         self.set_non_linear_mode("fake_quant", block, True)
         logger.info(f"End transform the {self.block_idx}-th block")
 
-    def rehook_next_subset(self, block, subset, next_subset):
-        self.subset_init(next_subset)
+    def rehook_next_subset(self, block, subset, next_subsets):
+        next_merged_subset = {
+            "layers": {
+                name: layer
+                for next_subset in next_subsets
+                for name, layer in next_subset["layers"].items()
+            }
+        }
+        self.subset_init(next_merged_subset)
         self.model.replace_module_subset(
             FakeQuantLinear,
             block,
@@ -805,7 +1022,7 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
         )
 
         input_feat_subset = defaultdict(list)
-        input_feat_modules = next_subset["layers"]
+        input_feat_modules = next_merged_subset["layers"]
         handles = self.register_hooks(input_feat_modules, input_feat_subset)
 
         self.block_forward(block)
@@ -817,14 +1034,7 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
     def collect_layers_weights(self, layers, tensor_parallelize_style=None):
         weights = []
         for _m in layers:
-            if _m.weight.data.dtype == torch.float8_e4m3fn:
-                fp8_scale = _m.weight_scale_inv
-                tmp_weight = weight_cast_to_bf16(_m.weight, fp8_scale).to(
-                    torch.bfloat16
-                )
-                weights.append(tmp_weight)
-            else:
-                weights.append(_m.weight)
+            weights.append(may_convert_fp8_weight_to_bf16(_m))
         return weights
 
     @torch.no_grad()
@@ -850,9 +1060,8 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
             ):
                 layers_dict = layer_func(block)
                 for name, layer in layers_dict.items():
-                    input_tensors = copy.deepcopy(input_feat[name])
+                    input_tensors = input_feat[name]
                     self.register_act_qparams({name: layer}, input_tensors)
-                    del input_tensors
 
     @torch.no_grad()
     def register_act_qparams(self, layers_dict, act_tensors):
@@ -872,6 +1081,8 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
                 if not isinstance(
                     layer, tuple(_LLMC_LINEAR_TYPES_ + _TRANSFORMERS_LINEAR_TYPES_)
                 ):
+                    continue
+                if getattr(layer, "no_quant", False):
                     continue
                 layer.register_buffer(f"buf_act_scales_{i}", scales)
                 layer.register_buffer(f"buf_act_zeros_{i}", zeros.cuda())
@@ -1088,10 +1299,7 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
 
     def rotate_pre_layers(self, pre_layers, Q):
         for layer in pre_layers:
-            if layer.weight.data.dtype == torch.float8_e4m3fn:
-                layer.weight.data = weight_cast_to_bf16(
-                    layer.weight.data, layer.weight_scale_inv.data
-                ).to(torch.bfloat16)
+            may_convert_fp8_weight_to_bf16(layer)
             dtype = layer.weight.dtype
             # layer.weight.data = torch.matmul(layer.weight.data.double(), Q).to(dtype)
             layer.weight.data = self.matmul_XQ_auto_reshape(
@@ -1107,10 +1315,7 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
 
     def rotate_post_layers(self, post_layers, Q, exact_had=False):
         for layer in post_layers:
-            if layer.weight.data.dtype == torch.float8_e4m3fn:
-                layer.weight.data = weight_cast_to_bf16(
-                    layer.weight.data, layer.weight_scale_inv.data
-                ).to(torch.bfloat16)
+            may_convert_fp8_weight_to_bf16(layer)
             dtype = layer.weight.dtype
 
             if self.offline_rotate:
@@ -1158,10 +1363,7 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
 
     def fuse_ln_fcs(self, ln, fcs):
         for fc in fcs:
-            if fc.weight.data.dtype == torch.float8_e4m3fn:
-                fc.weight.data = weight_cast_to_bf16(
-                    fc.weight.data, fc.weight_scale_inv.data
-                ).to(torch.bfloat16)
+            may_convert_fp8_weight_to_bf16(fc)
             fc_dtype = fc.weight.dtype
             if hasattr(ln, "bias") and ln.bias is not None:
                 W = fc.weight.data.double().clone()

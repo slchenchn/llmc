@@ -9,19 +9,16 @@ from loguru import logger
 from llmc.utils.registry_factory import ALGO_REGISTRY
 
 from .base_blockwise_quantization import BaseBlockwiseQuantization
-from .utils import is_fp8_supported_gpu
-
-if is_fp8_supported_gpu():
-    from .fp8_kernel import weight_cast_to_bf16, weight_cast_to_fp8
-    logger.info('import fp8_kernel successful.')
-else:
-    from .quant import weight_cast_to_bf16, weight_cast_to_fp8
-    logger.info('import quant successful.')
-
 from .module_utils import (_LLMC_LINEAR_TYPES_, _LLMC_LN_TYPES_,
                            _TRANSFORMERS_LINEAR_TYPES_,
-                           _TRANSFORMERS_LN_TYPES_, FakeQuantLinear)
-from .utils import check_do_quant, check_w_only, get_aquantizer, get_wquantizer
+                           _TRANSFORMERS_LN_TYPES_, FakeQuantLinear,
+                           may_convert_fp8_weight_to_bf16)
+from .utils import check_do_quant, check_w_only, get_aquantizer, get_wquantizer, is_fp8_supported_gpu
+
+if is_fp8_supported_gpu():
+    from .fp8_kernel import weight_cast_to_fp8
+else:
+    from .quant import weight_cast_to_fp8
 
 
 @ALGO_REGISTRY
@@ -58,10 +55,7 @@ class Awq(BaseBlockwiseQuantization):
         )
 
         for idx, _m in enumerate(layers):
-            if _m.weight.data.dtype == torch.float8_e4m3fn:
-                weight = weight_cast_to_bf16(_m.weight.data, _m.weight_scale_inv.data)
-            else:
-                weight = _m.weight.data.clone()
+            weight = may_convert_fp8_weight_to_bf16(_m).clone()
             org_shape = weight.shape
             reshaped = wquantizer.reshape_tensor(weight)
             abs_weights = reshaped.abs()
@@ -151,13 +145,12 @@ class Awq(BaseBlockwiseQuantization):
             return total_loss / b_num
 
     def fake_quantize_weight(self, fc, scales, is_gqa, layer_name):
-        if fc.weight.data.dtype == torch.float8_e4m3fn:
+        is_fp8 = fc.weight.data.dtype == torch.float8_e4m3fn
+        if is_fp8:
             fp8_scale = fc.weight_scale_inv.data
-            tmp_weight_data = weight_cast_to_bf16(fc.weight.data, fp8_scale).to(torch.bfloat16)
             tmp_fp8_scale = self.scaling_fp8_scale(fp8_scale, scales, is_pre_layer=False)
-        else:
-            tmp_weight_data = fc.weight.data
 
+        tmp_weight_data = may_convert_fp8_weight_to_bf16(fc)
         tmp_weight_data = self.scaling_weight(tmp_weight_data, scales, is_gqa)
         tmp_weight_data = get_wquantizer(
             self.block_idx,
@@ -167,7 +160,7 @@ class Awq(BaseBlockwiseQuantization):
             self.wquantizer,
         ).fake_quant_weight_dynamic(tmp_weight_data)
 
-        if fc.weight.data.dtype == torch.float8_e4m3fn:
+        if is_fp8:
             fc.weight.data = weight_cast_to_fp8(tmp_weight_data, tmp_fp8_scale)
             fc.weight_scale_inv.data = tmp_fp8_scale
         else:

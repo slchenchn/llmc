@@ -48,6 +48,7 @@ timestamp=$(date +"%Y%m%d_%H%M%S")
 LOG_DIR=${2:-logs}
 log_path=${LOG_DIR}/${task_name}_${timestamp}.log
 
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 mkdir -p ${LOG_DIR}
 torchrun \

@@ -33,6 +33,23 @@ except Exception:
 from .utils import calculate_zeros_width
 
 
+def may_convert_fp8_weight_to_bf16(layer):
+    """Convert FP8 weight to BF16 in-place if needed.
+    
+    Args:
+        layer: Layer module with weight attribute
+        
+    Returns:
+        BF16 weight tensor if input was FP8, otherwise original weight
+    """
+    weight = layer.weight
+    if weight.dtype == torch.float8_e4m3fn:
+        weight_bf16 = weight_cast_to_bf16(weight, layer.weight_scale_inv).to(torch.bfloat16)
+        layer.weight.data = weight_bf16
+        return weight_bf16
+    return weight
+
+
 def block_wise_fp8_forward_func(x, w, w_scale, block_size, bias):
     x, scale = act_quant(x, block_size)
     y = fp8_gemm(x, scale, w, w_scale).to(torch.bfloat16)
@@ -70,9 +87,7 @@ class LlmcFp8Linear(nn.Module):
                 )
                 return y
             else:
-                self.weight.data = weight_cast_to_bf16(
-                    self.weight.data, self.weight_scale_inv.data
-                ).to(torch.bfloat16)
+                may_convert_fp8_weight_to_bf16(self)
         y = torch.functional.F.linear(x, self.weight, self.bias)
         return y
 
@@ -797,10 +812,7 @@ class VllmRealQuantLinear(nn.Module):
     @classmethod
     @torch.no_grad()
     def quant_pack(cls, module, w_q, quant_config):
-        if module.weight.data.dtype == torch.float8_e4m3fn:
-            module.weight.data = weight_cast_to_bf16(
-                module.weight.data, module.weight_scale_inv.data
-            ).to(torch.bfloat16)
+        may_convert_fp8_weight_to_bf16(module)
         weight, scales, zeros = w_q(module)
         need_pack = quant_config["weight"].get("need_pack", False)
         if need_pack:
@@ -998,10 +1010,7 @@ class AutoawqRealQuantLinear(nn.Module):
     @classmethod
     @torch.no_grad()
     def quant_pack(cls, module, w_q, quant_config):
-        if module.weight.data.dtype == torch.float8_e4m3fn:
-            module.weight.data = weight_cast_to_bf16(
-                module.weight.data, module.weight_scale_inv.data
-            ).to(torch.bfloat16)
+        may_convert_fp8_weight_to_bf16(module)
         weight, scales, zeros = w_q(module)
         pack_version = quant_config["weight"]["pack_version"]
         if pack_version == "gemm_pack":
