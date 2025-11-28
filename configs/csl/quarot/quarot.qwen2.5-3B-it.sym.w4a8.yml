@@ -1,0 +1,29 @@
+base:
+    seed: &seed 42
+model:
+    type: Qwen2
+    path: /nfs/FM/chenshuailin/checkpoints/Qwen/Qwen2.5-3B-Instruct/
+    tokenizer_mode: fast
+    torch_dtype: torch.bfloat16
+quant:
+    method: Quarot
+    weight:
+        bit: 4
+        symmetric: true
+        granularity: per_channel
+    act:
+        bit: 8
+        symmetric: true
+        granularity: per_token
+    special:
+        rotate_mode: hadamard
+        true_sequential: True
+        online_rotate: False
+        fp32_had: True
+save:
+    # save_trans: True
+    # save_fake: False
+    save_vllm: True
+    save_path: checkpoints/Qwen2.5-3B-Instruct/quarot/sym_w4a8
+dispatch:
+    num_gpus: 1
