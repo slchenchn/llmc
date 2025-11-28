@@ -49,7 +49,13 @@ class FP4_E2M1_DATA:
 
 class NVFP4Quantizer(BaseQuantizer):
     def __init__(
-        self, bit, symmetric, granularity, arbitrary_group_size=False, **kwargs
+        self,
+        bit,
+        symmetric,
+        granularity,
+        arbitrary_group_size=False,
+        check_global_scale=True,
+        **kwargs,
     ):
         super().__init__(bit, symmetric, granularity, **kwargs)
         self.quant_type = "nvfp4-quant"
@@ -66,8 +72,9 @@ class NVFP4Quantizer(BaseQuantizer):
         self.qmin = torch.tensor(-6.0)
         self.qmax = torch.tensor(6.0)
         self.qmin = FP4_E2M1_DATA.min
-        self.qmax = 6.0 
+        self.qmax = 6.0
         self.zero_value = 0.0
+        self.check_global_scale = check_global_scale
 
         # Set up quantization parameters based on granularity
         assert self.granularity == "per_group", (
@@ -99,13 +106,14 @@ class NVFP4Quantizer(BaseQuantizer):
         absmax = torch.max(max_val.abs(), min_val.abs())
 
         global_absmax = absmax.max()
-        cur_global_scale = self.get_global_scale(global_absmax)
-        if global_scale is None:
-            global_scale = cur_global_scale
-        else:
-            assert cur_global_scale >= global_scale, (
-                f"cur_global_scale={cur_global_scale} is less than global_scale={global_scale}"
-            )
+        if self.check_global_scale:
+            cur_global_scale = self.get_global_scale(global_absmax)
+            if global_scale is None:
+                global_scale = cur_global_scale
+            else:
+                assert cur_global_scale >= global_scale, (
+                    f"cur_global_scale={cur_global_scale} is less than global_scale={global_scale}"
+                )
         if min_global_scale is not None:
             assert global_scale >= min_global_scale, (
                 f"global_scale={global_scale} is less than min_global_scale={min_global_scale}"

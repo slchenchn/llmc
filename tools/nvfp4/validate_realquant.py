@@ -1,16 +1,28 @@
+import argparse
+import json
+from pathlib import Path
+
+import torch
 from safetensors.torch import load_file
 from tqdm import trange
-from pathlib import Path
 from transformers import AutoConfig
-import torch
-import json
-import argparse
 
 
-def check_shared_scales(state_dict, num_hidden_layers, require_input_scale):
+def check_shared_scales(state_dict, cfg, require_input_scale):
     print("\n-----------------------------------------------")
     print("start checking shared scales...")
-    for layer in trange(num_hidden_layers):
+    mlp_names = {
+        "qwen3_moe": {
+            "gate_proj": "model.layers.{}.mlp.experts.{}.gate_proj",
+            "up_proj": "model.layers.{}.mlp.experts.{}.up_proj",
+        },
+        "default": {
+            "gate_proj": "model.layers.{}.mlp.gate",
+            "up_proj": "model.layers.{}.mlp.up_proj",
+        },
+    }
+    cur_mlp_names = mlp_names.get(cfg.model_type, mlp_names["default"])
+    for layer in trange(cfg.num_hidden_layers):
         scale_names = ("weight_global_scale",)
         if require_input_scale:
             scale_names = scale_names + ("input_global_scale",)
@@ -26,12 +38,24 @@ def check_shared_scales(state_dict, num_hidden_layers, require_input_scale):
             # print(f"{q_scale_key} is the same")
 
             # up/gate
-            up_scale_key = f"model.layers.{layer}.mlp.up_proj.{scale_name}"
-            up_scale = state_dict[up_scale_key]
-            gate_scale = state_dict[up_scale_key.replace("up_proj", "gate_proj")]
-            assert up_scale == gate_scale, (
-                f"up_scale ({up_scale}) != gate_scale ({gate_scale})"
-            )
+            n_experts = getattr(cfg, "num_experts", 1)
+            if n_experts > 1:
+                for i in range(n_experts):
+                    up_scale_key = cur_mlp_names["up_proj"].format(layer, i)
+                    gate_scale_key = cur_mlp_names["gate_proj"].format(layer, i)
+                    up_scale = state_dict[f"{up_scale_key}.{scale_name}"]
+                    gate_scale = state_dict[f"{gate_scale_key}.{scale_name}"]
+                    assert up_scale == gate_scale, (
+                        f"up_scale ({up_scale}) != gate_scale ({gate_scale})"
+                    )
+            else:
+                up_scale_key = cur_mlp_names["up_proj"].format(layer, 0)
+                gate_scale_key = cur_mlp_names["gate_proj"].format(layer, 0)
+                up_scale = state_dict[f"{up_scale_key}.{scale_name}"]
+                gate_scale = state_dict[f"{gate_scale_key}.{scale_name}"]
+                assert up_scale == gate_scale, (
+                    f"up_scale ({up_scale}) != gate_scale ({gate_scale})"
+                )
             # print(f"{up_scale_key} is the same")
 
     print("check shared scales done")
@@ -41,7 +65,7 @@ def check_dtype(state_dict):
     print("\n-----------------------------------------------")
     print("start checking dtype...")
     for name, weight in state_dict.items():
-        if "embed" in name or "head" in name or "norm" in name:
+        if "embed" in name or "head" in name or "norm" in name or ".gate." in name:
             # print(f"{name}: {weight.dtype}")
             continue
 
@@ -64,6 +88,37 @@ def check_dtype(state_dict):
         else:
             raise NotImplementedError(f"{name} is not supported")
     print("check dtype done")
+
+
+def check_scale_value(state_dict):
+    print("\n-----------------------------------------------")
+    print("start checking scale value...")
+
+    for name, value in state_dict.items():
+        if "scale" in name:
+            # Convert to float for comparison (weight_scale is float8_e4m3fn)
+            value_float = value.float()
+            if not (value_float > 0).all():
+                min_val = value_float.min().item()
+                raise AssertionError(
+                    f"Scale '{name}' contains non-positive values, min value: {min_val}"
+                )
+            # weight_global_scale should be greater than 100
+            if "weight_global_scale" in name:
+                if not (value_float > 100).all():
+                    min_val = value_float.min().item()
+                    raise AssertionError(
+                        f"weight_global_scale '{name}' should be > 100, but min value: {min_val}"
+                    )
+            # input_global_scale should be greater than 1e-3
+            if "input_global_scale" in name:
+                if not (value_float > 1e-3).all():
+                    min_val = value_float.min().item()
+                    raise AssertionError(
+                        f"input_global_scale '{name}' should be > 1e-3, but min value: {min_val}"
+                    )
+
+    print("check scale value done")
 
 
 def check_quant_group_completeness(state_dict, require_input_global_scale):
@@ -205,9 +260,10 @@ if __name__ == "__main__":
 
     cfg = AutoConfig.from_pretrained(model_dir)
     require_input_scale = _should_require_input_global_scale(model_dir)
-    check_shared_scales(state_dict, cfg.num_hidden_layers, require_input_scale)
+    check_shared_scales(state_dict, cfg, require_input_scale)
     check_quant_group_completeness(state_dict, require_input_scale)
     check_dtype(state_dict)
+    check_scale_value(state_dict)
     # for layer in trange(cfg.num_hidden_layers):
 
     # Print scale statistics after all checks pass
