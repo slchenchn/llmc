@@ -1,0 +1,60 @@
+base:
+    seed: &seed 42
+model:
+    type: MiniMaxM2
+    path: /nfs/FM/wuwenxian/checkpoint/MiniMaxAI/MiniMax-M2
+    tokenizer_mode: fast
+    torch_dtype: torch.float8_e4m3fn
+    calibrate_all_experts: True
+calib:
+    name: ultrachat
+    path: data/ultrachat
+    preproc: ultrachat_general
+    download: False
+    n_samples: 128
+    seq_len: 2048
+    seed: *seed
+    bs: 1
+quant:
+    method: RTN
+    weight:
+        quant_type: nvfp4
+        bit: 4
+        symmetric: True
+        granularity: per_group
+        group_size: 16
+        share_global_scale: True
+        calib_algo: mse
+    act:
+        quant_type: nvfp4
+        bit: 4
+        symmetric: True
+        granularity: per_group
+        group_size: 16
+        share_global_scale: True
+        calib_algo: static_minmax
+        static: True
+        # check_global_scale: False
+    special:
+        # actorder: True
+        # static_groups: True
+        # percdamp: 0.05
+        # blocksize: 128
+        # chunk_num: 1
+        true_sequential: True
+        # online_rotate: True
+        # fp32_had: False
+        # online_rotate_exclude: ["o_proj"]
+        # eager_transform_dtype: True
+        # force_scale_dtype: True
+    quant_out: True
+save:
+    # save_fake: True
+    # save_vllm: True
+    # save_autoawq: True
+    save_vllm_nvfp4: True
+    save_path: checkpoints/MiniMax-M2/RTN/nvf4_w4a4_mse_sgs_ultrachat_calib_all_experts
+dispatch:
+    num_gpus: 1
+    first_gpu_extra_margin: 0.0
+    # safe_margin: 0.8

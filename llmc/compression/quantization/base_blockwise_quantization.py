@@ -8,7 +8,6 @@ from collections import OrderedDict, defaultdict
 from contextlib import contextmanager
 from functools import partial
 
-from qtorch.quant import block_quantize
 import torch
 import torch.distributed as dist
 import torch.nn as nn
@@ -77,7 +76,7 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
         # logger.info(
         #     f"[block_on_cuda] Before yield - params: {param_before / 1024**3:.2f} GB, buffers: {buffer_before / 1024**3:.2f} GB, total: {(param_before + buffer_before) / 1024**3:.2f} GB"
         # )
-        yield block_quantize
+        yield block
 
         # 删除 tmp_weight 释放显存
         for m in block.modules():
@@ -187,7 +186,7 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
                 "online_full_had": "down_proj" in name,
                 "online_partial_had": "o_proj" in name,
                 "had_dim": (
-                    None if "down_proj" in name else self.hidden_size // self.num_heads
+                    None if "down_proj" in name else self.head_dim
                 ),
                 "fp32_had": self.fp32_had,
                 "online_rotate_tp": self.online_rotate_tp,
@@ -1326,7 +1325,7 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
 
             if exact_had and self.online_rotate:  # down_proj
                 apply_exact_had_to_linear(
-                    layer, had_dim=-1, output=False, K=self.rotate_groupsize
+                    layer, had_dim=-1, output=False
                 )
 
             if hasattr(layer, "bias") and layer.bias is not None:

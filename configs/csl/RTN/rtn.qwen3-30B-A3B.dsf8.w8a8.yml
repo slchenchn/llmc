@@ -1,0 +1,48 @@
+base:
+    seed: &seed 42
+model:
+    type: Qwen3MOE
+    path: /nfs/FM/chenshuailin/checkpoints/Qwen/Qwen3-30B-A3B
+    tokenizer_mode: fast
+    torch_dtype: torch.bfloat16
+# calib:
+#     name: ultrachat
+#     preproc: ultrachat_general
+#     path: data/ultrachat
+#     download: False
+#     n_samples: 128
+#     bs: 1
+#     seq_len: 2048
+#     seed: *seed
+quant:
+    method: RTN
+    weight:
+        quant_type: float-quant
+        bit: e4m3
+        symmetric: True
+        granularity: per_block
+        block_size: 128
+        calib_algo: minmax
+        use_qtorch: True
+    special:
+        # actorder: True
+        # static_groups: True
+        # percdamp: 0.05
+        # blocksize: 128
+        # chunk_num: 1
+        true_sequential: True
+        # online_rotate: True
+        # fp32_had: False
+        # online_rotate_exclude: ["o_proj"]
+        # eager_transform_dtype: True
+        # force_scale_dtype: True
+    quant_out: True
+save:
+    # save_fake: True
+    save_vllm: True
+    # save_autoawq: True
+    # save_vllm_nvfp4: True
+    save_path: checkpoints/Qwen3-30B-A3B/RTN/dsf8_w8a8
+dispatch:
+    num_gpus: 4
+    first_gpu_extra_margin: 0.4

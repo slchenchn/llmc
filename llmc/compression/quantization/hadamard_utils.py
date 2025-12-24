@@ -16,9 +16,12 @@ except Exception:
 # https://github.com/Cornell-RelaxML/quip-sharp/blob/main/lib/utils/matmul_had.py
 
 
-def get_hadK(n, transpose=False):
+def get_hadK(n, transpose=False, K=None):
     ''' handle the n that is not a power of 2 '''
-    hadK, K = None, None
+    hadK = None
+    if K is not None:
+        hadK, K = get_hadK(K).T if transpose else get_hadK(K)
+        return hadK, K
     if n % 172 == 0:  # llama-2-7b up
         assert is_pow2(n // 172)
         K = 172
@@ -165,7 +168,7 @@ def matmul_hadUt_cuda(X, hadK, K):
     return matmul_hadU_cuda(X, hadK, K, transpose=True)
 
 
-def apply_exact_had_to_linear(module, had_dim=-1, output=False):
+def apply_exact_had_to_linear(module, had_dim=-1, output=False, K=None):
     """Apply Hadamard transform to the weights of a linear layer.
     
     Args:
@@ -193,10 +196,10 @@ def apply_exact_had_to_linear(module, had_dim=-1, output=False):
     if had_dim == -1:
         if output:
             assert getattr(module, 'bias', None) is None, 'bias is not supported (or tested) had_dim=-1 and output=True'
-            had_K, K = get_hadK(out_features)
+            had_K, K = get_hadK(out_features, K=K)
             W_ = matmul_hadU_cuda(W_.t(), had_K, K).t()
         if not output:
-            had_K, K = get_hadK(in_features)
+            had_K, K = get_hadK(in_features, K=K)
             W_ = matmul_hadU_cuda(W_, had_K, K)
     else:
         # Apply Hadamard to the last had_dim chunks of the weights

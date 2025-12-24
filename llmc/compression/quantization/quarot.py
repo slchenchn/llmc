@@ -14,7 +14,6 @@ from .module_utils import (
     _LLMC_LN_TYPES_,
     _TRANSFORMERS_LN_TYPES_,
     LlmcRMSNorm,
-    RotateLinear,
 )
 
 
@@ -34,22 +33,10 @@ class Quarot(BaseBlockwiseQuantization):
             logger.info("quarot: Not preprocess the model")
 
     def matmul_QX_auto_reshape(self, Q, X):
-        x_ori_shape = X.shape
-        g = self.rotate_groupsize
-        assert x_ori_shape[-2] % g == 0, (
-            "X.shape[-2] % rotate_groupsize must be 0 for left-multiply grouping"
-        )
-        XT = X.transpose(-2, -1).contiguous()
-        YT = self.matmul_XQ_auto_reshape(XT, Q.T)
-        return YT.transpose(-2, -1)
+        return torch.matmul(Q, X)
 
     def matmul_XQ_auto_reshape(self, X, Q):
-        assert X.shape[-1] % self.rotate_groupsize == 0, (
-            "X.shape[-1] % rotate_groupsize must be 0 for right-multiply grouping"
-        )
-        x_ori_shape = X.shape
-        y = torch.matmul(X.contiguous().view(-1, self.rotate_groupsize), Q)
-        return y.view(x_ori_shape)
+        return torch.matmul(X, Q)
 
     def preprocess(self):
         if not self.offline_rotate:
@@ -118,11 +105,7 @@ class Quarot(BaseBlockwiseQuantization):
     @torch.inference_mode()
     def add_quant_config(self):
         self.rotate_mode = self.quant_config["special"]["rotate_mode"]
-        self.rotate_groupsize = self.quant_config["special"].get(
-            "rotate_groupsize", self.hidden_size
-        )
         self.offline_rotate = self.quant_config["special"].get("offline_rotate", True)
-        logger.info(f"rotate_groupsize: {self.rotate_groupsize}")
         logger.info(f"offline_rotate: {self.offline_rotate}")
 
     def random_orthogonal_matrix(self, size, device):
@@ -134,9 +117,9 @@ class Quarot(BaseBlockwiseQuantization):
 
     def get_orthogonal_matrix(self):
         if self.rotate_mode == "random":
-            return self.random_orthogonal_matrix(self.rotate_groupsize, self.dev)
+            return self.random_orthogonal_matrix(self.hidden_size, self.dev)
         elif self.rotate_mode == "hadamard":
-            return random_hadamard_matrix(self.rotate_groupsize, self.dev)
+            return random_hadamard_matrix(self.hidden_size, self.dev)
         else:
             raise ValueError(f"Unsupported mode {self.mode}")
 
