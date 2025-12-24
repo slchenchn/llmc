@@ -185,9 +185,7 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
                 "K": K,
                 "online_full_had": "down_proj" in name,
                 "online_partial_had": "o_proj" in name,
-                "had_dim": (
-                    None if "down_proj" in name else self.head_dim
-                ),
+                "had_dim": (None if "down_proj" in name else self.head_dim),
                 "fp32_had": self.fp32_had,
                 "online_rotate_tp": self.online_rotate_tp,
             }
@@ -605,7 +603,7 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
                     expert_ids.add(n.split(".")[2])
                     is_pattern1 = True
 
-                # Pattern 2: block_sparse_moe.experts.X.w1 (MiniMaxM2)
+                # Pattern 2: block_sparse_moe.experts.X.w1 (MiniMax-M2)
                 elif "block_sparse_moe.experts" in n and ".w1" in n:
                     expert_ids.add(n.split(".")[2])
                     is_pattern2 = True
@@ -638,6 +636,14 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
                         up_name.split(".")[-1]: named_linears[up_name],
                     }
                 )
+
+            if is_pattern1 and "mlp.shared_experts.gate_proj" in named_linears:
+                upgate_qparams["shared"] = self.collect_nvf4_shared_scales(
+                    {
+                        "gate_proj": named_linears["mlp.shared_experts.gate_proj"],
+                        "up_proj": named_linears["mlp.shared_experts.up_proj"],
+                    }
+                )
         return upgate_qparams
 
     @torch.no_grad()
@@ -648,13 +654,25 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
             weight_cfg.get("quant_type", "int-quant") == "nvfp4"
         ) and weight_cfg.get("share_global_scale", False)
         if use_share_global_scale:
-            qkv_qparams = self.collect_nvf4_shared_scales(
-                {
-                    "q_proj": named_linears["self_attn.q_proj"],
-                    "k_proj": named_linears["self_attn.k_proj"],
-                    "v_proj": named_linears["self_attn.v_proj"],
-                }
-            )
+            if "self_attn.q_proj" in named_linears:
+                """ normal-attn """
+                qkv_qparams = self.collect_nvf4_shared_scales(
+                    {
+                        "q_proj": named_linears["self_attn.q_proj"],
+                        "k_proj": named_linears["self_attn.k_proj"],
+                        "v_proj": named_linears["self_attn.v_proj"],
+                    }
+                )
+            elif "self_attn.q_a_proj" in named_linears:
+                """ deepseek mla """
+                qkv_qparams = self.collect_nvf4_shared_scales(
+                    {
+                        "q_a_proj": named_linears["self_attn.q_a_proj"],
+                        "kv_a_proj_with_mqa": named_linears[
+                            "self_attn.kv_a_proj_with_mqa"
+                        ],
+                    }
+                )
 
             upgate_qparams = self.collect_upgate_qparams(named_linears)
 
@@ -672,7 +690,13 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
             if use_share_global_scale:
                 global_scale = None
                 pname = n.split(".")[-1]
-                if pname in ("q_proj", "k_proj", "v_proj"):
+                if pname in (
+                    "q_proj",
+                    "k_proj",
+                    "v_proj",
+                    "q_a_proj",
+                    "kv_a_proj_with_mqa",
+                ):
                     qparams = (
                         None,
                         qkv_qparams["global_scale"],
@@ -684,6 +708,8 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
                     if "mlp.experts" in n or "block_sparse_moe.experts" in n:
                         eid = int(n.split(".")[2])
                         current_qparams = upgate_qparams[eid]
+                    elif "mlp.shared_experts" in n:
+                        current_qparams = upgate_qparams["shared"]
                     else:
                         current_qparams = upgate_qparams["dense"]
 
@@ -849,9 +875,12 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
             self.input["data"] = self.block_forward(block)
         torch.cuda.empty_cache()
 
-    def may_calibrate_all_experts_down_proj(self, input_feat):
+    def may_calibrate_all_experts_down_proj(self, block, input_feat):
         """only for MOE models"""
         if not getattr(self.model, "is_moe", False):
+            return
+
+        if self.model.get_moe_gate(block) is None:
             return
 
         if self.model.calibrate_all_experts:
@@ -951,7 +980,7 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
 
         if self.act_static:
             self.register_non_linear_qparams(block, input_feat)
-            self.may_calibrate_all_experts_down_proj(input_feat)
+            self.may_calibrate_all_experts_down_proj(block, input_feat)
 
         self.set_non_linear_mode("fake_quant", block, False)
 
@@ -1324,9 +1353,7 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
                 ).to(dtype)
 
             if exact_had and self.online_rotate:  # down_proj
-                apply_exact_had_to_linear(
-                    layer, had_dim=-1, output=False
-                )
+                apply_exact_had_to_linear(layer, had_dim=-1, output=False)
 
             if hasattr(layer, "bias") and layer.bias is not None:
                 b = layer.bias.data.to(torch.float64)
