@@ -4,7 +4,7 @@ from pathlib import Path
 
 import torch
 from safetensors.torch import load_file
-from tqdm import trange
+from tqdm import tqdm, trange
 from transformers import AutoConfig
 
 
@@ -15,6 +15,10 @@ def check_shared_scales(state_dict, cfg, require_input_scale):
         "qwen3_moe": {
             "gate_proj": "model.layers.{}.mlp.experts.{}.gate_proj",
             "up_proj": "model.layers.{}.mlp.experts.{}.up_proj",
+        },
+        "minimax_m2": {
+            "gate_proj": "model.layers.{}.block_sparse_moe.experts.{}.w1",
+            "up_proj": "model.layers.{}.block_sparse_moe.experts.{}.w3",
         },
         "default": {
             "gate_proj": "model.layers.{}.mlp.gate",
@@ -69,7 +73,7 @@ def check_dtype(state_dict):
             # print(f"{name}: {weight.dtype}")
             continue
 
-        if ".bias" in name:
+        if ".bias" in name or ".e_score_correction_bias" in name:
             # print(f"{name}: {weight.dtype}")
             continue
 
@@ -172,63 +176,53 @@ def print_scale_statistics(state_dict, require_input_global_scale):
     print("\n-----------------------------------------------")
     print("start printing scale statistics...")
 
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
     # Collect all weight_global_scale values
     weight_scales = []
     for name, value in state_dict.items():
         if name.endswith("weight_global_scale"):
-            # Handle both scalar and tensor cases
-            if value.numel() == 1:
-                weight_scales.append(value.item())
-            else:
-                weight_scales.extend(value.flatten().tolist())
+            weight_scales.append(value.flatten())
 
     if weight_scales:
-        weight_tensor = torch.tensor(weight_scales)
+        weight_tensor = torch.cat(weight_scales).to(device)
         print("\nweight_global_scale statistics:")
         print(f"  Max: {weight_tensor.max().item():.6f}")
         print(f"  Min: {weight_tensor.min().item():.6f}")
         print(f"  Mean: {weight_tensor.mean().item():.6f}")
         print(f"  Std: {weight_tensor.std().item():.6f}")
-        print(f"  Count: {len(weight_scales)}")
+        print(f"  Count: {weight_tensor.numel()}")
 
     # Collect all weight_scale (local_scale) values
     local_scales = []
     for name, value in state_dict.items():
         if name.endswith("weight_scale"):
-            # Handle both scalar and tensor cases
-            if value.numel() == 1:
-                local_scales.append(value.float().item())
-            else:
-                local_scales.extend(value.float().flatten().tolist())
+            local_scales.append(value.float().flatten())
 
     if local_scales:
-        local_tensor = torch.tensor(local_scales)
+        local_tensor = torch.cat(local_scales).to(device)
         print("\nlocal_scale (weight_scale) statistics:")
         print(f"  Max: {local_tensor.max().item():.6f}")
         print(f"  Min: {local_tensor.min().item():.6f}")
         print(f"  Mean: {local_tensor.mean().item():.6f}")
         print(f"  Std: {local_tensor.std().item():.6f}")
-        print(f"  Count: {len(local_scales)}")
+        print(f"  Count: {local_tensor.numel()}")
 
     # Collect all input_global_scale values if required
     if require_input_global_scale:
         input_scales = []
         for name, value in state_dict.items():
             if name.endswith("input_global_scale"):
-                # Handle both scalar and tensor cases
-                if value.numel() == 1:
-                    input_scales.append(value.item())
-                else:
-                    input_scales.extend(value.flatten().tolist())
+                input_scales.append(value.flatten())
 
         if input_scales:
-            input_tensor = torch.tensor(input_scales)
+            input_tensor = torch.cat(input_scales).to(device)
             print("\ninput_global_scale statistics:")
             print(f"  Max: {input_tensor.max().item():.6f}")
             print(f"  Min: {input_tensor.min().item():.6f}")
             print(f"  Mean: {input_tensor.mean().item():.6f}")
             print(f"  Std: {input_tensor.std().item():.6f}")
-            print(f"  Count: {len(input_scales)}")
+            print(f"  Count: {input_tensor.numel()}")
 
     print("scale statistics printed")
 
@@ -255,10 +249,10 @@ if __name__ == "__main__":
     model_dir = Path(args.model_dir)
 
     state_dict = {}
-    for safetensor in model_dir.glob("*.safetensors"):
+    for safetensor in tqdm(model_dir.glob("*.safetensors"), desc="loading state dicts"):
         state_dict.update(load_file(safetensor, device="cpu"))
 
-    cfg = AutoConfig.from_pretrained(model_dir)
+    cfg = AutoConfig.from_pretrained(model_dir, trust_remote_code=True)
     require_input_scale = _should_require_input_global_scale(model_dir)
     check_shared_scales(state_dict, cfg, require_input_scale)
     check_quant_group_completeness(state_dict, require_input_scale)

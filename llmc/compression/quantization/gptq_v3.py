@@ -55,6 +55,7 @@ class GPTQv3(BaseBlockwiseQuantization):
         self.owq = special_config.get("owq", False)
         self.chunk_num = special_config.get("chunk_num", 1)
         self.v2_alpha = special_config.get("v2_alpha", 0.25)
+        logger.info(f"v2_alpha: {self.v2_alpha}")
 
         # GPTQv2/GPTAQ: asymmetric calibration hooks (inputs from partially quantized model,
         # targets from full-precision). We enable data collection by default.
@@ -196,6 +197,10 @@ class GPTQv3(BaseBlockwiseQuantization):
             else:
                 self.search_layer_qparams(layer)
 
+        damp = self.percdamp * torch.mean(torch.diag(H))
+        diag = torch.arange(self.columns, device=self.dev)
+        H[diag , diag] += damp
+        
         if self.actorder or self.owq:
             W = W[:, self.perm]
             H = H[self.perm][:, self.perm]
@@ -240,9 +245,6 @@ class GPTQv3(BaseBlockwiseQuantization):
                 step=self.block_idx,
             )
 
-        damp = self.percdamp * torch.mean(torch.diag(H))
-        diag = torch.arange(self.columns, device=self.dev)
-        H[diag, diag] += damp
         # H condition number
         if self.log_diagnostics:
             try:

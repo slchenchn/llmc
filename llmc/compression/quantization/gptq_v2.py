@@ -157,59 +157,6 @@ class GPTQv2(BaseBlockwiseQuantization):
 
     @torch.no_grad()
     def layer_transform(self, layer, name):
-        # DEBUG: Save/Load state for problematic layer
-        resume_idx = 43
-        resume_name = "mlp.down_proj"
-        
-        # Check if we should load from saved state
-        from pathlib import Path
-        dump_dir = Path(f"cache/gptq_v2_resume_layer{resume_idx}_{resume_name}")
-        debug_state_path = dump_dir / "debug_state_full.pt"
-        
-        if self.block_idx == resume_idx and name == resume_name:
-            if debug_state_path.exists():
-                # LOAD MODE: Load saved state for debugging
-                print(f"[DEBUG] Loading state from {debug_state_path}")
-                debug_state = torch.load(debug_state_path, map_location='cuda')
-                
-                # Restore state
-                layer = debug_state['layer'].cuda()
-                self.layers_cache = debug_state['layers_cache']
-                self.groups = debug_state['groups']
-                
-                # Restore config
-                config = debug_state['self_config']
-                self.percdamp = config['percdamp']
-                self.actorder = config['actorder']
-                # self.owq = config['owq']
-                # self.n_out_dict = config['n_out_dict']
-                  
-                print(f"[DEBUG] State loaded successfully. You can now debug with:")
-                print(f"  - layer: {type(layer).__name__}, weight shape: {layer.weight.shape}")
-                print(f"  - H shape: {self.layers_cache[name]['H'].shape}")
-                print(f"  - dXXT shape: {self.layers_cache[name]['dXXT'].shape}")
-                print(f"[DEBUG] Proceeding with layer_transform...")
-            else:
-                # SAVE MODE: Save state for later debugging
-                dump_dir.mkdir(parents=True, exist_ok=True)
-
-                debug_state = {
-                    'layer': layer,  # Complete layer with all weights and buffers
-                    'layer_name': name,
-                    'block_idx': self.block_idx,
-                    'layers_cache': self.layers_cache,  # Contains H and dXXT
-                    # 'groups': self.groups,
-                    'self_config': {  # Key configuration from self
-                        'percdamp': self.percdamp,
-                        'actorder': self.actorder,
-                        # 'owq': self.owq,
-                        # 'n_out_dict': self.n_out_dict,
-                        # 'wquantizer_config': self.wquantizer.__dict__ if hasattr(self.wquantizer, '__dict__') else None,
-                    }
-                }
-                torch.save(debug_state, debug_state_path)
-                print(f"[DEBUG] Saved complete state to {debug_state_path}")
-
         self.initialize_qparams_and_prepare_weights(layer, name)
         percdamp = self.percdamp
         while percdamp < 1:
@@ -380,17 +327,17 @@ class GPTQv2(BaseBlockwiseQuantization):
         )
 
         if self.max_allowed_err and total_error > self.max_allowed_err:
-            from pathlib import Path
+            # from pathlib import Path
 
-            dump_dir = Path("cache/gptq_v2_debug")
-            dump_dir.mkdir(parents=True, exist_ok=True)
-            torch.save(layer.weight.data, dump_dir / f"layer_weight_{name}.pt")
-            torch.save(Hinv, dump_dir / f"Hinv_{name}.pt")
-            torch.save(W, dump_dir / f"W_{name}.pt")
-            torch.save(Losses, dump_dir / f"Losses_{name}.pt")
-            torch.save(tmp, dump_dir / f"tmp_{name}.pt")
+            # dump_dir = Path("cache/gptq_v2_debug")
+            # dump_dir.mkdir(parents=True, exist_ok=True)
+            # torch.save(layer.weight.data, dump_dir / f"layer_weight_{name}.pt")
+            # torch.save(Hinv, dump_dir / f"Hinv_{name}.pt")
+            # torch.save(W, dump_dir / f"W_{name}.pt")
+            # torch.save(Losses, dump_dir / f"Losses_{name}.pt")
+            # torch.save(tmp, dump_dir / f"tmp_{name}.pt")
             raise GPTQv2Error(
-                f"gptq error exceeds {self.max_allowed_err}, dumped debug info to {dump_dir}"
+                f"gptq error exceeds {self.max_allowed_err}"
             )
 
         if self.actorder or self.owq:

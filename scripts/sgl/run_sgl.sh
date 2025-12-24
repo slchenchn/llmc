@@ -9,6 +9,8 @@ if [ -d "$MODEL/vllm_quant_model" ]; then
     MODEL="$MODEL/vllm_quant_model"
 elif [ -d "$MODEL/autoawq_quant_model" ]; then
     MODEL="$MODEL/autoawq_quant_model"
+elif [ -d "$MODEL/vllm_nvfp4_quant_model" ]; then
+    MODEL="$MODEL/vllm_nvfp4_quant_model"
 fi
 
 # Determine visible GPU indices
