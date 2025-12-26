@@ -65,6 +65,14 @@ def check_shared_scales(state_dict, cfg, require_input_scale):
             f"up_scale ({up_scale}) != gate_scale ({gate_scale})"
         )
 
+    def _get_num_experts():
+        for attr in ("num_experts", "n_routed_experts", "num_local_experts"):
+            if hasattr(cfg, attr):
+                return getattr(cfg, attr)
+        raise AttributeError(
+            "No expert count found; expected one of num_experts, n_routed_experts, num_local_experts"
+        )
+
     for layer in trange(cfg.num_hidden_layers):
         has_moe = False
         if cur_moe_names is not None:
@@ -93,7 +101,7 @@ def check_shared_scales(state_dict, cfg, require_input_scale):
 
             # up/gate
             if has_moe:
-                n_experts = getattr(cfg, "num_experts")
+                n_experts = _get_num_experts()
                 for i in range(n_experts):
                     up_scale_key = cur_moe_names["up_proj"].format(layer, i)
                     gate_scale_key = cur_moe_names["gate_proj"].format(layer, i)
