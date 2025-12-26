@@ -25,6 +25,19 @@ def check_shared_scales(state_dict, cfg, require_input_scale):
             "up_proj": "model.layers.{}.mlp.up_proj",
         },
     }
+    attn_names = {
+        "deepseek_v3": {
+            "q_proj": "model.layers.{}.self_attn.q_a_proj",
+            "k_proj": "model.layers.{}.self_attn.kv_a_proj_with_mqa",
+            "v_proj": "model.layers.{}.self_attn.kv_a_proj_with_mqa",
+        },
+        "default": {
+            "q_proj": "model.layers.{}.self_attn.q_proj",
+            "k_proj": "model.layers.{}.self_attn.k_proj",
+            "v_proj": "model.layers.{}.self_attn.v_proj",
+        },
+    }
+    cur_attn_names = attn_names.get(cfg.model_type, attn_names["default"])
     cur_mlp_names = mlp_names.get(cfg.model_type, mlp_names["default"])
     for layer in trange(cfg.num_hidden_layers):
         scale_names = ("weight_global_scale",)
@@ -32,18 +45,22 @@ def check_shared_scales(state_dict, cfg, require_input_scale):
             scale_names = scale_names + ("input_global_scale",)
         for scale_name in scale_names:
             # qkv
-            q_scale_key = f"model.layers.{layer}.self_attn.q_proj.{scale_name}"
+            q_scale_key = cur_attn_names["q_proj"].format(layer) + f".{scale_name}"
             q_scale = state_dict[q_scale_key]
-            k_scale = state_dict[q_scale_key.replace("q_proj", "k_proj")]
-            v_scale = state_dict[q_scale_key.replace("q_proj", "v_proj")]
+            k_scale = state_dict[
+                cur_attn_names["k_proj"].format(layer) + f".{scale_name}"
+            ]
+            v_scale = state_dict[
+                cur_attn_names["v_proj"].format(layer) + f".{scale_name}"
+            ]
             assert q_scale == k_scale == v_scale, (
                 f"q_scale ({q_scale}) != k_scale ({k_scale}) != v_scale ({v_scale})"
             )
             # print(f"{q_scale_key} is the same")
 
             # up/gate
-            n_experts = getattr(cfg, "num_experts", 1)
-            if n_experts > 1:
+            if hasattr(cfg, "num_experts"):
+                n_experts = getattr(cfg, "num_experts")
                 for i in range(n_experts):
                     up_scale_key = cur_mlp_names["up_proj"].format(layer, i)
                     gate_scale_key = cur_mlp_names["gate_proj"].format(layer, i)
@@ -53,14 +70,14 @@ def check_shared_scales(state_dict, cfg, require_input_scale):
                         f"up_scale ({up_scale}) != gate_scale ({gate_scale})"
                     )
             else:
-                up_scale_key = cur_mlp_names["up_proj"].format(layer, 0)
-                gate_scale_key = cur_mlp_names["gate_proj"].format(layer, 0)
+                up_scale_key = cur_mlp_names["up_proj"].format(layer)
+                gate_scale_key = cur_mlp_names["gate_proj"].format(layer)
                 up_scale = state_dict[f"{up_scale_key}.{scale_name}"]
                 gate_scale = state_dict[f"{gate_scale_key}.{scale_name}"]
                 assert up_scale == gate_scale, (
                     f"up_scale ({up_scale}) != gate_scale ({gate_scale})"
                 )
-            # print(f"{up_scale_key} is the same")
+                # print(f"{up_scale_key} is the same")
 
     print("check shared scales done")
 
