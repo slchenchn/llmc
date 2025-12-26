@@ -11,7 +11,7 @@ from transformers import AutoConfig
 def check_shared_scales(state_dict, cfg, require_input_scale):
     print("\n-----------------------------------------------")
     print("start checking shared scales...")
-    mlp_names = {
+    moe_mlp_names = {
         "qwen3_moe": {
             "gate_proj": "model.layers.{}.mlp.experts.{}.gate_proj",
             "up_proj": "model.layers.{}.mlp.experts.{}.up_proj",
@@ -20,10 +20,26 @@ def check_shared_scales(state_dict, cfg, require_input_scale):
             "gate_proj": "model.layers.{}.block_sparse_moe.experts.{}.w1",
             "up_proj": "model.layers.{}.block_sparse_moe.experts.{}.w3",
         },
+        "deepseek_v3": {
+            "gate_proj": "model.layers.{}.mlp.experts.{}.gate_proj",
+            "up_proj": "model.layers.{}.mlp.experts.{}.up_proj",
+        },
+    }
+    dense_mlp_names = {
+        "deepseek_v3": {
+            "gate_proj": "model.layers.{}.mlp.gate_proj",
+            "up_proj": "model.layers.{}.mlp.up_proj",
+        },
         "default": {
             "gate_proj": "model.layers.{}.mlp.gate",
             "up_proj": "model.layers.{}.mlp.up_proj",
         },
+    }
+    shared_mlp_names = {
+        "deepseek_v3": {
+            "gate_proj": "model.layers.{}.mlp.shared_experts.gate_proj",
+            "up_proj": "model.layers.{}.mlp.shared_experts.up_proj",
+        }
     }
     attn_names = {
         "deepseek_v3": {
@@ -38,8 +54,25 @@ def check_shared_scales(state_dict, cfg, require_input_scale):
         },
     }
     cur_attn_names = attn_names.get(cfg.model_type, attn_names["default"])
-    cur_mlp_names = mlp_names.get(cfg.model_type, mlp_names["default"])
+    cur_moe_names = moe_mlp_names.get(cfg.model_type)
+    cur_dense_names = dense_mlp_names.get(cfg.model_type, dense_mlp_names["default"])
+    cur_shared_names = shared_mlp_names.get(cfg.model_type)
+
+    def _check_scale_pair(up_key, gate_key, scale_name):
+        up_scale = state_dict[f"{up_key}.{scale_name}"]
+        gate_scale = state_dict[f"{gate_key}.{scale_name}"]
+        assert up_scale == gate_scale, (
+            f"up_scale ({up_scale}) != gate_scale ({gate_scale})"
+        )
+
     for layer in trange(cfg.num_hidden_layers):
+        has_moe = False
+        if cur_moe_names is not None:
+            moe_probe = (
+                cur_moe_names["gate_proj"].format(layer, 0) + ".weight_global_scale"
+            )
+            has_moe = moe_probe in state_dict
+
         scale_names = ("weight_global_scale",)
         if require_input_scale:
             scale_names = scale_names + ("input_global_scale",)
@@ -59,24 +92,24 @@ def check_shared_scales(state_dict, cfg, require_input_scale):
             # print(f"{q_scale_key} is the same")
 
             # up/gate
-            if hasattr(cfg, "num_experts"):
+            if has_moe:
                 n_experts = getattr(cfg, "num_experts")
                 for i in range(n_experts):
-                    up_scale_key = cur_mlp_names["up_proj"].format(layer, i)
-                    gate_scale_key = cur_mlp_names["gate_proj"].format(layer, i)
-                    up_scale = state_dict[f"{up_scale_key}.{scale_name}"]
-                    gate_scale = state_dict[f"{gate_scale_key}.{scale_name}"]
-                    assert up_scale == gate_scale, (
-                        f"up_scale ({up_scale}) != gate_scale ({gate_scale})"
-                    )
+                    up_scale_key = cur_moe_names["up_proj"].format(layer, i)
+                    gate_scale_key = cur_moe_names["gate_proj"].format(layer, i)
+                    _check_scale_pair(up_scale_key, gate_scale_key, scale_name)
+                if cur_shared_names is not None:
+                    shared_up_key = cur_shared_names["up_proj"].format(layer)
+                    shared_gate_key = cur_shared_names["gate_proj"].format(layer)
+                    if (
+                        f"{shared_up_key}.{scale_name}" in state_dict
+                        and f"{shared_gate_key}.{scale_name}" in state_dict
+                    ):
+                        _check_scale_pair(shared_up_key, shared_gate_key, scale_name)
             else:
-                up_scale_key = cur_mlp_names["up_proj"].format(layer)
-                gate_scale_key = cur_mlp_names["gate_proj"].format(layer)
-                up_scale = state_dict[f"{up_scale_key}.{scale_name}"]
-                gate_scale = state_dict[f"{gate_scale_key}.{scale_name}"]
-                assert up_scale == gate_scale, (
-                    f"up_scale ({up_scale}) != gate_scale ({gate_scale})"
-                )
+                up_scale_key = cur_dense_names["up_proj"].format(layer)
+                gate_scale_key = cur_dense_names["gate_proj"].format(layer)
+                _check_scale_pair(up_scale_key, gate_scale_key, scale_name)
                 # print(f"{up_scale_key} is the same")
 
     print("check shared scales done")
