@@ -234,53 +234,62 @@ def print_scale_statistics(state_dict, require_input_global_scale):
     print("\n-----------------------------------------------")
     print("start printing scale statistics...")
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = "cpu"
+
+    def _init_stats():
+        return {
+            "count": 0,
+            "sum": 0.0,
+            "sum_sq": 0.0,
+            "min": float("inf"),
+            "max": float("-inf"),
+        }
+
+    def _update_stats(stats, tensor):
+        values = tensor.to(device=device).float().view(-1)
+        stats["count"] += values.numel()
+        stats["sum"] += values.sum().item()
+        stats["sum_sq"] += (values * values).sum().item()
+        stats["min"] = min(stats["min"], values.min().item())
+        stats["max"] = max(stats["max"], values.max().item())
+
+    def _print_stats(title, stats):
+        if stats["count"] == 0:
+            return
+        mean = stats["sum"] / stats["count"]
+        variance = stats["sum_sq"] / stats["count"] - mean * mean
+        std = variance**0.5 if variance > 0 else 0.0
+        print(f"\n{title} statistics:")
+        print(f"  Max: {stats['max']:.6f}")
+        print(f"  Min: {stats['min']:.6f}")
+        print(f"  Mean: {mean:.6f}")
+        print(f"  Std: {std:.6f}")
+        print(f"  Count: {stats['count']}")
 
     # Collect all weight_global_scale values
-    weight_scales = []
+    weight_stats = _init_stats()
     for name, value in state_dict.items():
         if name.endswith("weight_global_scale"):
-            weight_scales.append(value.flatten())
+            _update_stats(weight_stats, value)
 
-    if weight_scales:
-        weight_tensor = torch.cat(weight_scales).to(device)
-        print("\nweight_global_scale statistics:")
-        print(f"  Max: {weight_tensor.max().item():.6f}")
-        print(f"  Min: {weight_tensor.min().item():.6f}")
-        print(f"  Mean: {weight_tensor.mean().item():.6f}")
-        print(f"  Std: {weight_tensor.std().item():.6f}")
-        print(f"  Count: {weight_tensor.numel()}")
+    _print_stats("weight_global_scale", weight_stats)
 
     # Collect all weight_scale (local_scale) values
-    local_scales = []
+    local_stats = _init_stats()
     for name, value in state_dict.items():
         if name.endswith("weight_scale"):
-            local_scales.append(value.float().flatten())
+            _update_stats(local_stats, value)
 
-    if local_scales:
-        local_tensor = torch.cat(local_scales).to(device)
-        print("\nlocal_scale (weight_scale) statistics:")
-        print(f"  Max: {local_tensor.max().item():.6f}")
-        print(f"  Min: {local_tensor.min().item():.6f}")
-        print(f"  Mean: {local_tensor.mean().item():.6f}")
-        print(f"  Std: {local_tensor.std().item():.6f}")
-        print(f"  Count: {local_tensor.numel()}")
+    _print_stats("local_scale (weight_scale)", local_stats)
 
     # Collect all input_global_scale values if required
     if require_input_global_scale:
-        input_scales = []
+        input_stats = _init_stats()
         for name, value in state_dict.items():
             if name.endswith("input_global_scale"):
-                input_scales.append(value.flatten())
+                _update_stats(input_stats, value)
 
-        if input_scales:
-            input_tensor = torch.cat(input_scales).to(device)
-            print("\ninput_global_scale statistics:")
-            print(f"  Max: {input_tensor.max().item():.6f}")
-            print(f"  Min: {input_tensor.min().item():.6f}")
-            print(f"  Mean: {input_tensor.mean().item():.6f}")
-            print(f"  Std: {input_tensor.std().item():.6f}")
-            print(f"  Count: {input_tensor.numel()}")
+        _print_stats("input_global_scale", input_stats)
 
     print("scale statistics printed")
 
