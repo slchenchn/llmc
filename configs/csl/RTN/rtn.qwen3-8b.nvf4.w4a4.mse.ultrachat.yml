@@ -2,7 +2,7 @@ base:
     seed: &seed 42
 model:
     type: Qwen2
-    path: /ms/FM/chenshuailin/projects/pretrain/Megatron-Bridge/nemo_experiments/Qwen3-8B-Base_SFT_pack_TP2_e1_fp8/checkpoints/iter_0017596/hf_model
+    path: /nfs/FM/chenshuailin/checkpoints/Qwen/Qwen3-8B
     tokenizer_mode: fast
     torch_dtype: torch.bfloat16
     # calibrate_all_experts: True
@@ -53,7 +53,7 @@ save:
     # save_vllm: True
     # save_autoawq: True
     save_vllm_nvfp4: True
-    save_path: checkpoints/Qwen3-8B-Base_SFT_pack_TP2_e1_fp8/RTN/nvf4_w4a4_mse_sgs_ultrachat
+    save_path: checkpoints/Qwen3-8B/RTN/nvf4_w4a4_mse_sgs_ultrachat
 dispatch:
     num_gpus: 1
     # first_gpu_extra_margin: 0.6

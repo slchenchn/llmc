@@ -1,11 +1,16 @@
 import argparse
 import json
+import sys
 from pathlib import Path
 
 import torch
 from safetensors.torch import load_file
 from tqdm import tqdm, trange
 from transformers import AutoConfig
+
+# Add tools directory to path for imports
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+from check_tokenizer import check_chat_template, TokenizerConfigError
 
 
 def check_shared_scales(state_dict, cfg, require_input_scale):
@@ -31,7 +36,7 @@ def check_shared_scales(state_dict, cfg, require_input_scale):
             "up_proj": "model.layers.{}.mlp.up_proj",
         },
         "default": {
-            "gate_proj": "model.layers.{}.mlp.gate",
+            "gate_proj": "model.layers.{}.mlp.gate_proj",
             "up_proj": "model.layers.{}.mlp.up_proj",
         },
     }
@@ -314,6 +319,16 @@ def get_args():
 if __name__ == "__main__":
     args = get_args()
     model_dir = Path(args.model_dir)
+
+    # Check tokenizer config has chat_template
+    print("\n-----------------------------------------------")
+    print("start checking tokenizer config...")
+    try:
+        check_chat_template(model_dir)
+        print("check tokenizer config done (chat_template exists)")
+    except TokenizerConfigError as e:
+        print(f"ERROR: {e}")
+        sys.exit(1)
 
     state_dict = {}
     for safetensor in tqdm(model_dir.glob("*.safetensors"), desc="loading state dicts"):

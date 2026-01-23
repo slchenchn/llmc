@@ -43,3 +43,4 @@ tools/
 wandb/
 third_party/
 .venv/
+.claude
