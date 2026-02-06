@@ -118,29 +118,45 @@ class DeepseekV3(BaseModel):
     def _get_attn_subsets_in_block(self, block):
         layers = []
 
-        layers.append(
-            {
-                "layers": {
-                    "self_attn.q_a_proj": block.self_attn.q_a_proj,
-                    "self_attn.kv_a_proj_with_mqa": block.self_attn.kv_a_proj_with_mqa,  # noqa
-                },
-                "prev_op": [block.input_layernorm],
-                "input": ["self_attn.q_a_proj"],
-                "inspect": block.self_attn,
-                "has_kwargs": True,
-            }
-        )
-        layers.append(
-            {
-                "layers": {"self_attn.q_b_proj": block.self_attn.q_b_proj},
-                "prev_op": [block.self_attn.q_a_layernorm],
-                "input": ["self_attn.q_b_proj"],
-                "inspect": block.self_attn.q_b_proj,
-                "has_kwargs": False,
-                "true_sequential": False,
-                "skip_rotate": True,
-            }
-        )
+        if hasattr(block.self_attn, "q_proj"):
+            """ deepseek-v3-small (moonlight-16B-A3B) """
+            layers.append(
+                {
+                    "layers": {
+                        "self_attn.q_proj": block.self_attn.q_proj,  # noqa
+                        "self_attn.kv_a_proj_with_mqa": block.self_attn.kv_a_proj_with_mqa,  # noqa
+                    },
+                    "prev_op": [block.input_layernorm],
+                    "input": ["self_attn.q_proj"],
+                    "inspect": block.self_attn,
+                    "has_kwargs": True,
+                }
+            )
+        else:
+            """ deepseek-v3-671B """
+            layers.append(
+                {
+                    "layers": {
+                        "self_attn.q_a_proj": block.self_attn.q_a_proj,
+                        "self_attn.kv_a_proj_with_mqa": block.self_attn.kv_a_proj_with_mqa,  # noqa
+                    },
+                    "prev_op": [block.input_layernorm],
+                    "input": ["self_attn.q_a_proj"],
+                    "inspect": block.self_attn,
+                    "has_kwargs": True,
+                }
+            )
+            layers.append(
+                {
+                    "layers": {"self_attn.q_b_proj": block.self_attn.q_b_proj},
+                    "prev_op": [block.self_attn.q_a_layernorm],
+                    "input": ["self_attn.q_b_proj"],
+                    "inspect": block.self_attn.q_b_proj,
+                    "has_kwargs": False,
+                    "true_sequential": False,
+                    "skip_rotate": True,
+                }
+            )
 
         layers.append(
             {

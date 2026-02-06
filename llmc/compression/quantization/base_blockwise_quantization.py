@@ -277,6 +277,7 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
             self.ignored_speical_names = self.config.ignored_layers.get(
                 "speical_names", []
             )
+            self.set_no_quant_layer()
         else:
             self.mixed_precision = False
 
@@ -654,23 +655,33 @@ class BaseBlockwiseQuantization(BlockwiseOpt):
             weight_cfg.get("quant_type", "int-quant") == "nvfp4"
         ) and weight_cfg.get("share_global_scale", False)
         if use_share_global_scale:
-            if "self_attn.q_proj" in named_linears:
+            if "self_attn.kv_a_proj_with_mqa" in named_linears:
+                """ deepseek mla """
+                if "self_attn.q_proj" in named_linears:
+                    qkv_qparams = self.collect_nvf4_shared_scales(
+                        {
+                            "q_proj": named_linears["self_attn.q_proj"],
+                            "kv_a_proj_with_mqa": named_linears[
+                                "self_attn.kv_a_proj_with_mqa"
+                            ],
+                        }
+                    )
+                else:
+                    qkv_qparams = self.collect_nvf4_shared_scales(
+                        {
+                            "q_a_proj": named_linears["self_attn.q_a_proj"],
+                            "kv_a_proj_with_mqa": named_linears[
+                                "self_attn.kv_a_proj_with_mqa"
+                            ],
+                        }
+                    )
+            else:
                 """ normal-attn """
                 qkv_qparams = self.collect_nvf4_shared_scales(
                     {
                         "q_proj": named_linears["self_attn.q_proj"],
                         "k_proj": named_linears["self_attn.k_proj"],
                         "v_proj": named_linears["self_attn.v_proj"],
-                    }
-                )
-            elif "self_attn.q_a_proj" in named_linears:
-                """ deepseek mla """
-                qkv_qparams = self.collect_nvf4_shared_scales(
-                    {
-                        "q_a_proj": named_linears["self_attn.q_a_proj"],
-                        "kv_a_proj_with_mqa": named_linears[
-                            "self_attn.kv_a_proj_with_mqa"
-                        ],
                     }
                 )
 

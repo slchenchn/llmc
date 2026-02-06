@@ -761,6 +761,10 @@ class VllmRealQuantLinear(nn.Module):
         self.register_buffer(scales_name, scales)
         self.register_buffer("input_scale", input_scale)
 
+    def _save_to_state_dict(self, destination, prefix, keep_vars):
+        super()._save_to_state_dict(destination, prefix, keep_vars)
+        destination.pop(prefix + "no_quant", None)
+
     @torch.no_grad()
     def forward(self, x):
         raise NotImplementedError
@@ -877,6 +881,10 @@ class VllmRealQuantLinearNVFP4(nn.Module):
         if input_global_scale is not None:
             self.register_buffer("input_global_scale", input_global_scale.clone())
 
+    def _save_to_state_dict(self, destination, prefix, keep_vars):
+        super()._save_to_state_dict(destination, prefix, keep_vars)
+        destination.pop(prefix + "no_quant", None)
+
     @torch.no_grad()
     def forward(self, x):
         raise NotImplementedError
@@ -909,7 +917,7 @@ class VllmRealQuantLinearNVFP4(nn.Module):
     @torch.no_grad()
     def quant_pack(cls, module, w_q, quant_config):
         weight, global_scale, local_scales = w_q(module)
-        weight = cls.pack(weight)
+        weight = cls.pack(weight.bfloat16())
         return weight, global_scale, local_scales
 
     @classmethod
@@ -976,6 +984,10 @@ class AutoawqRealQuantLinear(nn.Module):
             if zeros is not None
             else setattr(self, "qzeros", None)
         )
+
+    def _save_to_state_dict(self, destination, prefix, keep_vars):
+        super()._save_to_state_dict(destination, prefix, keep_vars)
+        destination.pop(prefix + "no_quant", None)
 
     @torch.no_grad()
     def forward(self, x):
