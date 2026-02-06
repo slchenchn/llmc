@@ -10,10 +10,19 @@ from transformers import AutoConfig
 
 # Add tools directory to path for imports
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
-from check_tokenizer import check_chat_template, TokenizerConfigError
+from check_tokenizer import TokenizerConfigError, check_chat_template
 
 
-def check_shared_scales(state_dict, cfg, require_input_scale):
+def _is_ignored(name, ignore_prefixes):
+    if not ignore_prefixes:
+        return False
+    for prefix in ignore_prefixes:
+        if name == prefix or name.startswith(f"{prefix}."):
+            return True
+    return False
+
+
+def check_shared_scales(state_dict, cfg, require_input_scale, ignore_prefixes):
     print("\n-----------------------------------------------")
     print("start checking shared scales...")
     moe_mlp_names = {
@@ -48,7 +57,10 @@ def check_shared_scales(state_dict, cfg, require_input_scale):
     }
     attn_names = {
         "deepseek_v3": {
-            "q_proj": "model.layers.{}.self_attn.q_a_proj",
+            "q_proj": (
+                "model.layers.{}.self_attn.q_a_proj",
+                "model.layers.{}.self_attn.q_proj",
+            ),
             "k_proj": "model.layers.{}.self_attn.kv_a_proj_with_mqa",
             "v_proj": "model.layers.{}.self_attn.kv_a_proj_with_mqa",
         },
@@ -63,12 +75,31 @@ def check_shared_scales(state_dict, cfg, require_input_scale):
     cur_dense_names = dense_mlp_names.get(cfg.model_type, dense_mlp_names["default"])
     cur_shared_names = shared_mlp_names.get(cfg.model_type)
 
+    def _resolve_attn_key(attn_key, layer, scale_name):
+        name_entry = cur_attn_names[attn_key]
+        if isinstance(name_entry, (list, tuple)):
+            for pattern in name_entry:
+                candidate = pattern.format(layer) + f".{scale_name}"
+                if candidate in state_dict:
+                    return pattern.format(layer)
+            return name_entry[0].format(layer)
+        return name_entry.format(layer)
+
     def _check_scale_pair(up_key, gate_key, scale_name):
         up_scale = state_dict[f"{up_key}.{scale_name}"]
         gate_scale = state_dict[f"{gate_key}.{scale_name}"]
         assert up_scale == gate_scale, (
             f"up_scale ({up_scale}) != gate_scale ({gate_scale})"
         )
+
+    def _attn_key_is_ignored(attn_key, layer):
+        name_entry = cur_attn_names[attn_key]
+        if isinstance(name_entry, (list, tuple)):
+            for pattern in name_entry:
+                if _is_ignored(pattern.format(layer), ignore_prefixes):
+                    return True
+            return False
+        return _is_ignored(name_entry.format(layer), ignore_prefixes)
 
     def _get_num_experts():
         for attr in ("num_experts", "n_routed_experts", "num_local_experts"):
@@ -91,29 +122,45 @@ def check_shared_scales(state_dict, cfg, require_input_scale):
             scale_names = scale_names + ("input_global_scale",)
         for scale_name in scale_names:
             # qkv
-            q_scale_key = cur_attn_names["q_proj"].format(layer) + f".{scale_name}"
-            q_scale = state_dict[q_scale_key]
-            k_scale = state_dict[
-                cur_attn_names["k_proj"].format(layer) + f".{scale_name}"
-            ]
-            v_scale = state_dict[
-                cur_attn_names["v_proj"].format(layer) + f".{scale_name}"
-            ]
-            assert q_scale == k_scale == v_scale, (
-                f"q_scale ({q_scale}) != k_scale ({k_scale}) != v_scale ({v_scale})"
-            )
-            # print(f"{q_scale_key} is the same")
+            if not (
+                _attn_key_is_ignored("q_proj", layer)
+                or _attn_key_is_ignored("k_proj", layer)
+                or _attn_key_is_ignored("v_proj", layer)
+            ):
+                q_scale_key = (
+                    _resolve_attn_key("q_proj", layer, scale_name) + f".{scale_name}"
+                )
+                q_scale = state_dict[q_scale_key]
+                k_scale = state_dict[
+                    _resolve_attn_key("k_proj", layer, scale_name) + f".{scale_name}"
+                ]
+                v_scale = state_dict[
+                    _resolve_attn_key("v_proj", layer, scale_name) + f".{scale_name}"
+                ]
+                assert q_scale == k_scale == v_scale, (
+                    f"q_scale ({q_scale}) != k_scale ({k_scale}) != v_scale ({v_scale})"
+                )
+                # print(f"{q_scale_key} is the same")
 
             # up/gate
             if has_moe:
+                assert cur_moe_names is not None
                 n_experts = _get_num_experts()
                 for i in range(n_experts):
                     up_scale_key = cur_moe_names["up_proj"].format(layer, i)
                     gate_scale_key = cur_moe_names["gate_proj"].format(layer, i)
+                    if _is_ignored(up_scale_key, ignore_prefixes) or _is_ignored(
+                        gate_scale_key, ignore_prefixes
+                    ):
+                        continue
                     _check_scale_pair(up_scale_key, gate_scale_key, scale_name)
                 if cur_shared_names is not None:
                     shared_up_key = cur_shared_names["up_proj"].format(layer)
                     shared_gate_key = cur_shared_names["gate_proj"].format(layer)
+                    if _is_ignored(shared_up_key, ignore_prefixes) or _is_ignored(
+                        shared_gate_key, ignore_prefixes
+                    ):
+                        continue
                     if (
                         f"{shared_up_key}.{scale_name}" in state_dict
                         and f"{shared_gate_key}.{scale_name}" in state_dict
@@ -122,16 +169,23 @@ def check_shared_scales(state_dict, cfg, require_input_scale):
             else:
                 up_scale_key = cur_dense_names["up_proj"].format(layer)
                 gate_scale_key = cur_dense_names["gate_proj"].format(layer)
+                if _is_ignored(up_scale_key, ignore_prefixes) or _is_ignored(
+                    gate_scale_key, ignore_prefixes
+                ):
+                    continue
                 _check_scale_pair(up_scale_key, gate_scale_key, scale_name)
                 # print(f"{up_scale_key} is the same")
 
     print("check shared scales done")
 
 
-def check_dtype(state_dict):
+def check_dtype(state_dict, ignore_prefixes):
     print("\n-----------------------------------------------")
     print("start checking dtype...")
     for name, weight in state_dict.items():
+        if _is_ignored(name, ignore_prefixes):
+            continue
+
         if "embed" in name or "head" in name or "norm" in name or ".gate." in name:
             # print(f"{name}: {weight.dtype}")
             continue
@@ -157,11 +211,14 @@ def check_dtype(state_dict):
     print("check dtype done")
 
 
-def check_scale_value(state_dict):
+def check_scale_value(state_dict, ignore_prefixes):
     print("\n-----------------------------------------------")
     print("start checking scale value...")
 
     for name, value in state_dict.items():
+        if _is_ignored(name, ignore_prefixes):
+            continue
+
         if "scale" in name:
             # Convert to float for comparison (weight_scale is float8_e4m3fn)
             value_float = value.float()
@@ -188,7 +245,9 @@ def check_scale_value(state_dict):
     print("check scale value done")
 
 
-def check_quant_group_completeness(state_dict, require_input_global_scale):
+def check_quant_group_completeness(
+    state_dict, require_input_global_scale, ignore_prefixes
+):
     print("\n-----------------------------------------------")
     print("start checking quant group completeness...")
 
@@ -208,6 +267,8 @@ def check_quant_group_completeness(state_dict, require_input_global_scale):
             if name.endswith(suffix):
                 base = name.rsplit(".", 1)[0]
                 found = base_to_found.get(base)
+                if _is_ignored(base, ignore_prefixes):
+                    break
                 if found is None:
                     found = set()
                     base_to_found[base] = found
@@ -227,7 +288,9 @@ def check_quant_group_completeness(state_dict, require_input_global_scale):
     # If input scales are not required by config, assert they do not exist at all
     if not require_input_global_scale:
         for name in state_dict.keys():
-            if name.endswith("input_global_scale"):
+            if name.endswith("input_global_scale") and not _is_ignored(
+                name, ignore_prefixes
+            ):
                 raise AssertionError(
                     f"Found unexpected input_global_scale '{name}' while config has no input_activations"
                 )
@@ -235,7 +298,7 @@ def check_quant_group_completeness(state_dict, require_input_global_scale):
     print("check quant group completeness done")
 
 
-def print_scale_statistics(state_dict, require_input_global_scale):
+def print_scale_statistics(state_dict, require_input_global_scale, ignore_prefixes):
     print("\n-----------------------------------------------")
     print("start printing scale statistics...")
 
@@ -274,7 +337,9 @@ def print_scale_statistics(state_dict, require_input_global_scale):
     # Collect all weight_global_scale values
     weight_stats = _init_stats()
     for name, value in state_dict.items():
-        if name.endswith("weight_global_scale"):
+        if name.endswith("weight_global_scale") and not _is_ignored(
+            name, ignore_prefixes
+        ):
             _update_stats(weight_stats, value)
 
     _print_stats("weight_global_scale", weight_stats)
@@ -282,7 +347,7 @@ def print_scale_statistics(state_dict, require_input_global_scale):
     # Collect all weight_scale (local_scale) values
     local_stats = _init_stats()
     for name, value in state_dict.items():
-        if name.endswith("weight_scale"):
+        if name.endswith("weight_scale") and not _is_ignored(name, ignore_prefixes):
             _update_stats(local_stats, value)
 
     _print_stats("local_scale (weight_scale)", local_stats)
@@ -291,7 +356,9 @@ def print_scale_statistics(state_dict, require_input_global_scale):
     if require_input_global_scale:
         input_stats = _init_stats()
         for name, value in state_dict.items():
-            if name.endswith("input_global_scale"):
+            if name.endswith("input_global_scale") and not _is_ignored(
+                name, ignore_prefixes
+            ):
                 _update_stats(input_stats, value)
 
         _print_stats("input_global_scale", input_stats)
@@ -308,6 +375,16 @@ def _should_require_input_global_scale(model_dir: Path) -> bool:
     group0 = cfg["quantization_config"]["config_groups"]["group_0"]
 
     return "input_activations" in group0 and group0["input_activations"] is not None
+
+
+def _get_ignore_prefixes(model_dir: Path):
+    cfg_path = model_dir / "config.json"
+    with cfg_path.open("r") as f:
+        cfg = json.load(f)
+    ignore_list = cfg.get("quantization_config", {}).get("ignore")
+    if not ignore_list:
+        return []
+    return [item for item in ignore_list if item]
 
 
 def get_args():
@@ -336,13 +413,15 @@ if __name__ == "__main__":
 
     cfg = AutoConfig.from_pretrained(model_dir, trust_remote_code=True)
     require_input_scale = _should_require_input_global_scale(model_dir)
-    check_shared_scales(state_dict, cfg, require_input_scale)
-    check_quant_group_completeness(state_dict, require_input_scale)
-    check_dtype(state_dict)
-    check_scale_value(state_dict)
+    ignore_prefixes = _get_ignore_prefixes(model_dir)
+    print(f"{ignore_prefixes}")
+    check_shared_scales(state_dict, cfg, require_input_scale, ignore_prefixes)
+    check_quant_group_completeness(state_dict, require_input_scale, ignore_prefixes)
+    check_dtype(state_dict, ignore_prefixes)
+    check_scale_value(state_dict, ignore_prefixes)
     # for layer in trange(cfg.num_hidden_layers):
 
     # Print scale statistics after all checks pass
-    print_scale_statistics(state_dict, require_input_scale)
+    print_scale_statistics(state_dict, require_input_scale, ignore_prefixes)
 
     print("\nAll check done")
